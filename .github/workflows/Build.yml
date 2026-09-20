@@ -708,14 +708,11 @@ jobs:
           rm -rf /tmp/rtl8188eus
 
           DRV=drivers/net/wireless/realtek/rtl8188eu
-          WFLAGS="-Wno-error=parentheses-equality -Wno-error=misleading-indentation -Wno-error=tautological-overlap-compare -Wno-error=tautological-constant-out-of-range-compare -Wno-error=constant-conversion -Wno-error=shift-count-overflow -Wno-error=pointer-sign -Wno-error=address-of-packed-member -Wno-error=enum-conversion -Wno-error=incompatible-pointer-types-discards-qualifiers -Wno-unknown-warning-option"
-          INCFLAGS="-I\$(src)/include -I\$(src)/os_dep/linux -I\$(src)/hal -I\$(src)/hal/rtl8188e -I\$(src)/hal/phydm"
-          ALLFLAGS="$WFLAGS $INCFLAGS"
 
           # === FIX 1: Kconfig syntax ===
           sed -i 's/---help---/help/g' "$DRV/Kconfig"
 
-          # === FIX 2: Remove unsupported warning flags ===
+          # === FIX 2: Remove unsupported warning flags from Makefiles ===
           find "$DRV" -name 'Makefile' -type f | while read -r f; do
             sed -i 's/-Wno-cast-function-type//g' "$f"
             sed -i 's/-Wno-misleading-indentation//g' "$f"
@@ -726,23 +723,24 @@ jobs:
             sed -i 's/-Werror=array-bounds//g' "$f"
           done
 
-          # === FIX 3: Add flags + include paths to ALL Makefiles ===
+          # === FIX 3: Add include path using $(srctree)/$(src)/include ===
+          # Yeh upstream fix hai - rtl8188eu ke liye
           find "$DRV" -name 'Makefile' -type f | while read -r f; do
             if grep -q '^ccflags-y' "$f"; then
-              sed -i "s|^ccflags-y += |ccflags-y += $ALLFLAGS |" "$f"
+              sed -i 's|^ccflags-y += |ccflags-y += -I$(srctree)/$(src)/include |' "$f"
             else
-              echo "ccflags-y += $ALLFLAGS" >> "$f"
+              echo 'ccflags-y += -I$(srctree)/$(src)/include' >> "$f"
             fi
           done
 
-          # === FIX 3b: Root Makefile ===
+          # Root Makefile mein bhi
           if grep -q '^ccflags-y' "$DRV/Makefile"; then
-            sed -i "s|^ccflags-y += |ccflags-y += $ALLFLAGS |" "$DRV/Makefile"
+            sed -i 's|^ccflags-y += |ccflags-y += -I$(srctree)/$(src)/include |' "$DRV/Makefile"
           else
-            echo "ccflags-y += $ALLFLAGS" >> "$DRV/Makefile"
+            echo 'ccflags-y += -I$(srctree)/$(src)/include' >> "$DRV/Makefile"
           fi
 
-          # === FIX 4: usb_halinit.c ===
+          # === FIX 4: usb_halinit.c parentheses ===
           sed -i 's/if ((IS_FULL_SPEED_USB(Adapter))/if (IS_FULL_SPEED_USB(Adapter)/g' \
             "$DRV/hal/rtl8188e/usb/usb_halinit.c" || true
 
@@ -752,7 +750,7 @@ jobs:
               "$DRV/hal/phydm/phydm_debug.c" || true
           fi
 
-          # === FIX 6: Add 0bda:8176 (RTL8188CUS) to supported list ===
+          # === FIX 6: Add 0bda:8176 (RTL8188CUS) ===
           if [ -f "$DRV/os_dep/linux/usb_intf.c" ]; then
             if ! grep -q '0x8176' "$DRV/os_dep/linux/usb_intf.c"; then
               sed -i 's/{USB_DEVICE(0x0bda, 0x8179)}/{USB_DEVICE(0x0bda, 0x8179)}, {USB_DEVICE(0x0bda, 0x8176)}/g' \
@@ -770,12 +768,10 @@ jobs:
             echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eu/' >> drivers/net/wireless/realtek/Makefile
           fi
 
-          echo "=== rtl8188eu in tree ==="
-          ls "$DRV/" | head -10
-          echo "=== include dir check ==="
-          ls "$DRV/include/" | head -5 || echo "include dir missing!"
-          echo "=== drv_types.h check ==="
-          find "$DRV" -name "drv_types.h" | head -3 || echo "drv_types.h not found!"
+          echo "=== Verify include path in Makefile ==="
+          grep -r 'srctree.*include' "$DRV" --include='Makefile' | head -5
+          echo "=== Verify drv_types.h exists ==="
+          find "$DRV" -name "drv_types.h" -type f
           
       - name: Clean dirty flag
         working-directory: kernel_workspace
