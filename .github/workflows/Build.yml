@@ -707,8 +707,13 @@ jobs:
           cp -r /tmp/rtl8188eus/* drivers/net/wireless/realtek/rtl8188eu/
           rm -rf /tmp/rtl8188eus
 
-          # Fix Kconfig syntax — ---help--- → help
+          # Fix Kconfig syntax
           sed -i 's/---help---/help/g' drivers/net/wireless/realtek/rtl8188eu/Kconfig
+
+          # Remove unsupported warning flags from Makefile
+          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/Makefile
+          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/*/Makefile 2>/dev/null || true
+          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/**/Makefile 2>/dev/null || true
 
           # Kconfig hook
           if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Kconfig; then
@@ -718,9 +723,7 @@ jobs:
           if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Makefile; then
             echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eu/' >> drivers/net/wireless/realtek/Makefile
           fi
-
-          echo "=== Kconfig after fix ==="
-          cat drivers/net/wireless/realtek/rtl8188eu/Kconfig | head -20
+          echo "=== rtl8188eu in tree ==="
           ls drivers/net/wireless/realtek/rtl8188eu/ | head -10
 
       - name: Clean dirty flag
