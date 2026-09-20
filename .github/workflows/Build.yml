@@ -1,4 +1,4 @@
-name: Build GKI Drivers (SimplyCEO external module)
+name: Build GKI Drivers (SimplyCEO external module with Clang)
 
 on:
   workflow_dispatch:
@@ -80,19 +80,32 @@ jobs:
           echo "=== Makefile platform config ==="
           grep -n 'CONFIG_PLATFORM_I386_PC\|CONFIG_PLATFORM_ARM64_RPI' rtl8188eus/Makefile
 
-      - name: Build 8188eu.ko (external module)
+      - name: Build 8188eu.ko (external module with Clang)
         working-directory: ${{ github.workspace }}/rtl8188eus
         run: |
           set -euo pipefail
+
+          # GKI prebuilt Clang use karo
+          CLANG_PATH=$GITHUB_WORKSPACE/kernel_workspace/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin
+          echo "CLANG_PATH=$CLANG_PATH"
+          ls $CLANG_PATH/clang || echo "clang not found"
+
+          # KSRC = kernel output directory
           KSRC=$GITHUB_WORKSPACE/kernel_workspace/out/android12-5.10/common
           KVER=$(cat $KSRC/include/config/kernel.release 2>/dev/null || echo "5.10.269-BLAZE-KSUNv1-STABLE")
           echo "KSRC=$KSRC"
           echo "KVER=$KVER"
           ls -la $KSRC/Module.symvers || echo "Module.symvers not found"
 
+          # PATH mein Clang add karo
+          export PATH=$CLANG_PATH:$PATH
+          export LLVM=1
+          export LLVM_IAS=1
+
           make -j$(nproc) \
             ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
             KSRC=$KSRC \
             KVER=$KVER \
             2>&1 | tee build.log || true
