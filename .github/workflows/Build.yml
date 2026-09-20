@@ -1,4 +1,4 @@
-name: Build GKI Drivers (aircrack-ng rtl8188eus only)
+name: Build GKI Drivers (aircrack-ng official method)
 
 on:
   workflow_dispatch:
@@ -50,34 +50,6 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest \
             -b common-${{ env.VERSION }}-lts --depth=1
           repo sync -c --current-branch --no-clone-bundle --no-tags -j"$(nproc)"
-
-      - name: Add aircrack-ng rtl8188eus driver (in-tree, latest master)
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/aircrack-ng/rtl8188eus \
-            drivers/net/wireless/rtl8188eus
-
-          # Kbuild hook: unconditional obj-m, no CONFIG_* symbol needed
-          if ! grep -q 'rtl8188eus/' drivers/net/wireless/Makefile; then
-            echo 'obj-m += rtl8188eus/' >> drivers/net/wireless/Makefile
-          fi
-
-          # Older Kconfig syntax — naye parser reject karte hain
-          sed -i 's/---help---/help/g' drivers/net/wireless/rtl8188eus/Kconfig || true
-
-          # phydm_debug.c: sizeof(argv) (whole array, 320 bytes) was used
-          # instead of sizeof(argv[0]) (one row, 16 bytes) as strnlen bound.
-          # Newer GCC flags this as -Werror=stringop-overread.
-          PHYDM=drivers/net/wireless/rtl8188eus/hal/phydm/phydm_debug.c
-          if [ -f "$PHYDM" ]; then
-            sed -i \
-              's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' \
-              "$PHYDM"
-          fi
-
-          echo "=== tail of wireless/Makefile ==="
-          tail -5 drivers/net/wireless/Makefile
 
       - name: Add driver configs
         run: |
@@ -358,7 +330,7 @@ jobs:
             [ -e "$BIN_DIR/ld" ] || ln -s ld.lld "$BIN_DIR/ld"
           fi
 
-      - name: Build kernel (drivers only)
+      - name: Build kernel (in-tree drivers)
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -371,14 +343,78 @@ jobs:
           CCACHE_DIR="${{ env.CCACHE_DIR }}" \
           build/build.sh -j"$(nproc)"
 
-      - name: Generate Drivers Magisk Module
+      - name: Clone aircrack-ng rtl8188eus driver (official guide method)
         working-directory: kernel_workspace
+        run: |
+          set -euo pipefail
+          # Official guide: driver kernel source ke PEEECHE rakho
+          git clone --depth 1 https://github.com/aircrack-ng/rtl8188eus rtl8188eus
+
+          # Kconfig syntax fix
+          sed -i 's/---help---/help/g' rtl8188eus/Kconfig || true
+
+          # phydm_debug.c fix — naye GCC -Werror=stringop-overread
+          PHYDM=rtl8188eus/hal/phydm/phydm_debug.c
+          if [ -f "$PHYDM" ]; then
+            sed -i \
+              's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' \
+              "$PHYDM"
+          fi
+
+          echo "=== driver cloned at $(pwd)/rtl8188eus ==="
+          ls -la rtl8188eus/ | head -10
+
+      - name: Build 8188eu.ko (official guide method)
+        working-directory: ${{ github.workspace }}/kernel_workspace/rtl8188eus
+        run: |
+          set -euo pipefail
+
+          # Official guide ke environment variables
+          export ARCH=arm64
+          export SUBARCH=arm64
+
+          # KBUILD_KVER — kernel.release se lo
+          KVER=$(cat $GITHUB_WORKSPACE/kernel_workspace/common/include/config/kernel.release 2>/dev/null || echo "5.10.269-BLAZE-KSUNv1-STABLE")
+          export KBUILD_KVER="$KVER"
+          echo "KBUILD_KVER=$KBUILD_KVER"
+
+          # Driver folder mein make karo — guide ke mutabiq
+          make \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -C $GITHUB_WORKSPACE/kernel_workspace/common \
+            M=$PWD \
+            modules 2>&1 | tee build.log || true
+
+          echo "=== find .ko ==="
+          find . -name "*.ko" -type f || true
+          ls -la *.ko 2>/dev/null || echo "no .ko in root"
+
+      - name: Collect 8188eu.ko
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p out
+          if [ -d kernel_workspace/rtl8188eus ]; then
+            find kernel_workspace/rtl8188eus -name "8188eu.ko" -exec cp {} out/ \; || true
+          fi
+          if [ -d kernel_workspace/out ]; then
+            find kernel_workspace/out -name "*.ko" -exec cp {} out/ \; || true
+          fi
+          echo "=== out tree ==="
+          ls -la out/ || true
+          echo "=== 8188eu.ko check ==="
+          ls -la out/8188eu.ko || echo "8188eu.ko not found"
+
+      - name: Generate Wireless Magisk Module
+        if: always()
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           mkdir -p wireless_module/system/lib/modules
           mkdir -p wireless_module/META-INF/com/google/android
 
-          find out -name "*.ko" -exec cp {} wireless_module/system/lib/modules/ \; || true
+          cp out/*.ko wireless_module/system/lib/modules/ 2>/dev/null || true
           COUNT=$(find wireless_module/system/lib/modules -name "*.ko" | wc -l)
           echo "Packaging ${COUNT} .ko modules"
           ls -la wireless_module/system/lib/modules/ | head -40
@@ -473,9 +509,12 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE"/*.zip
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.inputs.device_name }}-drivers
-          path: ${{ github.workspace }}/*.zip
-          if-no-files-found: error
+          path: |
+            ${{ github.workspace }}/*.zip
+            ${{ github.workspace }}/out/*.ko
+          if-no-files-found: warn
           retention-days: 14
