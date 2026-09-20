@@ -698,6 +698,25 @@ jobs:
             echo "CONFIG_TMPFS_XATTR=y"
           } >> gki_defconfig
 
+      - name: Add rtl8188eus driver to kernel tree
+        working-directory: kernel_workspace/common
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/d3vilh/rtl8188eus /tmp/rtl8188eus
+          mkdir -p drivers/net/wireless/realtek/rtl8188eu
+          cp -r /tmp/rtl8188eus/* drivers/net/wireless/realtek/rtl8188eu/
+          rm -rf /tmp/rtl8188eus
+          # Kconfig hook
+          if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Kconfig; then
+            echo 'source "drivers/net/wireless/realtek/rtl8188eu/Kconfig"' >> drivers/net/wireless/realtek/Kconfig
+          fi
+          # Makefile hook
+          if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Makefile; then
+            echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eu/' >> drivers/net/wireless/realtek/Makefile
+          fi
+          echo "=== rtl8188eu in tree ==="
+          ls drivers/net/wireless/realtek/rtl8188eu/ | head -10
+
       - name: Clean dirty flag
         working-directory: kernel_workspace
         run: |
@@ -751,19 +770,7 @@ jobs:
             echo "Symlinked ld -> ld.lld in $BIN_DIR"
           else
             echo "::warning::no ld.lld found under prebuilts-master"
-          fi
-
-      - name: Add rtl8188eus external module
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/d3vilh/rtl8188eus /tmp/rtl8188eus
-          mkdir -p common-modules/rtl8188eus
-          cp -r /tmp/rtl8188eus/* common-modules/rtl8188eus/
-          rm -rf /tmp/rtl8188eus
-          echo 'EXT_MODULES=common-modules/rtl8188eus' >> common/build.config.gki.aarch64
-          echo "=== EXT_MODULES set ==="
-          grep EXT_MODULES common/build.config.gki.aarch64  
+          fi 
 
       - name: Build kernel
         working-directory: kernel_workspace
