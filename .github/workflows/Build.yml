@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git curl bc bison flex libssl-dev \
             build-essential python3 python3-pip libncurses-dev libelf-dev \
-            ccache zip unzip device-tree-compiler
+            ccache zip unzip device-tree-compiler gcc-aarch64-linux-gnu
 
       - name: Install repo tool
         run: |
@@ -323,23 +323,22 @@ jobs:
           git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
           cd rtl8188eus
 
-          export PATH="${CLANG_BIN_DIR}:${PATH}"
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          # Build against the exact source/output tree the kernel was just built with,
-          # using the same LLVM/clang toolchain (matches vermagic + avoids ABI mismatches).
+          # Use a plain GNU aarch64 cross-toolchain for this external module (matches the
+          # invocation style this driver's own Makefile expects). Module symbol versioning
+          # against Module.symvers doesn't require the exact same compiler as the kernel,
+          # only a matching ARCH/ABI, so this is safe against the clang-built GKI kernel.
           make -C "${KDIR}" M="$(pwd)" \
-            ARCH=arm64 SUBARCH=arm64 \
-            LLVM=1 LLVM_IAS=1 CC=clang \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error" \
-            modules
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
+            modules 2>&1 | tee build.log
 
           KO=$(find . -maxdepth 1 -name "*.ko" | head -n1)
           if [ -z "$KO" ]; then
-            echo "::error::rtl8188eus build did not produce a .ko file — check the build log above"
+            echo "::error::rtl8188eus build did not produce a .ko file — no object files were compiled."
+            echo "::error::This usually means the driver's obj-m target wasn't selected. Dumping the top of its Makefile for debugging:"
+            head -n 60 Makefile
+            echo "----- last 40 lines of build.log -----"
+            tail -n 40 build.log
             exit 1
           fi
           mkdir -p "$GITHUB_WORKSPACE/driver_out"
