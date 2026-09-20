@@ -21,6 +21,7 @@ jobs:
             libssl-dev libelf-dev python3 python3-pip cpio rsync kmod
 
       - name: Clone ACK kernel source (android12-5.10-lts)
+        working-directory: ${{ github.workspace }}
         run: |
           set -eux
           git clone --depth 1 \
@@ -33,9 +34,9 @@ jobs:
           head -5 Makefile
 
       - name: Configure kernel (gki_defconfig)
+        working-directory: ${{ github.workspace }}/kernel_common
         run: |
           set -eux
-          cd kernel_common
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           cat >> arch/arm64/configs/gki_defconfig << 'EOF'
           CONFIG_RTL8188EU=m
@@ -51,9 +52,9 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
       - name: Build kernel (vmlinux + modules → Module.symvers)
+        working-directory: ${{ github.workspace }}/kernel_common
         run: |
           set -eux
-          cd kernel_common
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare
           echo "=== building vmlinux ==="
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) vmlinux
@@ -65,16 +66,18 @@ jobs:
           cat include/config/kernel.release
 
       - name: Clone SimplyCEO rtl8188eus driver
+        working-directory: ${{ github.workspace }}
         run: |
           set -eux
           git clone --depth 1 https://github.com/SimplyCEO/rtl8188eus /tmp/rtl8188eus
           mkdir -p driver
           cp -r /tmp/rtl8188eus/* driver/
           rm -rf /tmp/rtl8188eus
-          echo "=== driver HEAD ==="
-          cd driver && git log --oneline -1 2>/dev/null || echo "no git history"
+          echo "=== driver files ==="
+          ls driver/ | head -20
 
       - name: Prepare driver (fixes)
+        working-directory: ${{ github.workspace }}
         run: |
           set -eux
           DRV=driver
@@ -138,9 +141,9 @@ jobs:
           find "$DRV" -name "drv_types.h" -type f || echo "not found"
 
       - name: Build 8188eu.ko
+        working-directory: ${{ github.workspace }}/driver
         run: |
           set -eux
-          cd driver
           make \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -153,6 +156,7 @@ jobs:
 
       - name: Collect 8188eu.ko
         if: always()
+        working-directory: ${{ github.workspace }}
         run: |
           mkdir -p out
           if [ -d driver ]; then
@@ -166,10 +170,11 @@ jobs:
             cd kernel_common && git log --oneline -1 > ../out/kernel-commit.txt || true
           fi
           echo "=== out tree ==="
-          ls -la out/
+          ls -la out/ || true
 
       - name: Show modinfo
         if: always()
+        working-directory: ${{ github.workspace }}
         run: |
           for f in out/*.ko; do
             echo "=== $f ==="
@@ -182,6 +187,6 @@ jobs:
         with:
           name: 8188eu-ko
           path: |
-            out/**/*
-            driver/build.log
+            ${{ github.workspace }}/out/**/*
+            ${{ github.workspace }}/driver/build.log
           if-no-files-found: warn
