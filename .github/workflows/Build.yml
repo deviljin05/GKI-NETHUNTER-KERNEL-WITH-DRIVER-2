@@ -322,18 +322,19 @@ jobs:
           # and builds one module: 8188eu.ko
           git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
           cd rtl8188eus
+          DRVDIR="$(pwd)"
 
           # Use the same LLVM/clang toolchain the kernel itself was built with — the kernel's
           # own KBUILD_CFLAGS include clang-only flags (CFI, shadow-call-stack, etc.) that a
           # plain GCC cross-compiler cannot parse.
           export PATH="${CLANG_BIN_DIR}:${PATH}"
-          make -C "${KDIR}" M="$(pwd)" \
+          make -C "${KDIR}" M="${DRVDIR}" \
             ARCH=arm64 SUBARCH=arm64 \
             LLVM=1 LLVM_IAS=1 CC=clang \
             CROSS_COMPILE=aarch64-linux-android- \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CONFIG_RTL8188EU=m CONFIG_RTL8188E=y CONFIG_MULTIDRV=n \
-            ccflags-y="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
+            ccflags-y="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration -I${DRVDIR}/include -I${DRVDIR}/os_dep/linux -I${DRVDIR}/hal -I${DRVDIR}/hal/OUTSRC -I${DRVDIR}/platform" \
             modules 2>&1 | tee build.log
 
           KO=$(find . -maxdepth 1 -name "*.ko" | head -n1)
