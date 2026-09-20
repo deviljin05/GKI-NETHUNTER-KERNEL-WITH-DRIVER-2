@@ -1,4 +1,4 @@
-name: Build GKI Drivers (SimplyCEO official method)
+name: Build GKI Drivers (SimplyCEO official method, fragment merge)
 
 on:
   workflow_dispatch:
@@ -43,45 +43,65 @@ jobs:
             -b common-${{ env.VERSION }}-lts --depth=1
           repo sync -c --current-branch --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Add driver configs (GKI-safe)
+      - name: Create driver fragment
         working-directory: kernel_workspace/common/arch/arm64/configs
         run: |
           set -euo pipefail
-          # GKI defconfig mein yeh sab already hain, override mat karo:
-          # - CONFIG_CFG80211, CONFIG_MAC80211, CONFIG_MAC80211_LEDS (built-in y)
-          # - CONFIG_WLAN_VENDOR_REALTEK (already y, RTL8188EU=m se auto)
-          # - CONFIG_CRYPTO_MICHAEL_MIC, CONFIG_CRC_ITU_T, CONFIG_CRC_CCITT (built-in y)
-          # Sirf naye configs add karo jo GKI mein nahi hain:
-          cat >> gki_defconfig << 'EOF'
+          cat > driver_gki.fragment << 'EOF'
           CONFIG_RTL8188EU=m
           CONFIG_CRYPTO_ARC4=m
           EOF
-          echo "=== tail of gki_defconfig ==="
-          tail -5 gki_defconfig
+          echo "=== fragment ==="
+          cat driver_gki.fragment
 
-      - name: Build kernel (Module.symvers generate karo)
+      - name: Patch build.config.db845c (FRAGMENT_CONFIG + PRE_DEFCONFIG_CMDS)
+        working-directory: kernel_workspace/common
+        run: |
+          set -euo pipefail
+          # db845c build config use karo, lekin fragment merge karo
+          cat > build.config.driver << 'EOF'
+          . ${ROOT_DIR}/${KERNEL_DIR}/build.config.common
+          . ${ROOT_DIR}/${KERNEL_DIR}/build.config.aarch64
+          BUILD_INITRAMFS=1
+          DEFCONFIG=gki_defconfig
+          FRAGMENT_CONFIG=${KERNEL_DIR}/arch/arm64/configs/driver_gki.fragment
+          PRE_DEFCONFIG_CMDS="KCONFIG_CONFIG=${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG} ${ROOT_DIR}/${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -r ${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/gki_defconfig ${ROOT_DIR}/${FRAGMENT_CONFIG}"
+          POST_DEFCONFIG_CMDS="rm ${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
+          MAKE_GOALS="Image.lz4 modules"
+          EOF
+          echo "=== build.config.driver created ==="
+          cat build.config.driver
+
+      - name: Patch build.config.gki.aarch64 for fragment support
+        working-directory: kernel_workspace/common
+        run: |
+          set -euo pipefail
+          # GKI_DEFCONFIG_FRAGMENT support already exists in build.config.gki.aarch64
+          # Verify
+          tail -5 build.config.gki.aarch64
+
+      - name: Build kernel (fragment merge)
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
           export KBUILD_BUILD_USER="builder"
           export KBUILD_BUILD_HOST="ci"
+          export GKI_DEFCONFIG_FRAGMENT="${ROOT_DIR}/common/arch/arm64/configs/driver_gki.fragment"
           LTO=thin \
           SKIP_MRPROPER=1 \
-          BUILD_CONFIG=common/build.config.gki.aarch64 \
+          BUILD_CONFIG=common/build.config.driver \
           USE_CCACHE=1 \
           CCACHE_DIR="${{ env.CCACHE_DIR }}" \
           build/build.sh -j"$(nproc)"
 
-      - name: Clone SimplyCEO rtl8188eus driver (official guide)
+      - name: Clone SimplyCEO rtl8188eus driver
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           git clone --depth 1 https://gitlab.com/SimplyCEO/rtl8188eus.git rtl8188eus
 
-          # Kconfig syntax fix
           sed -i 's/---help---/help/g' rtl8188eus/Kconfig || true
 
-          # phydm_debug.c fix — naye GCC -Werror=stringop-overread
           PHYDM=rtl8188eus/hal/phydm/phydm_debug.c
           if [ -f "$PHYDM" ]; then
             sed -i \
@@ -89,14 +109,13 @@ jobs:
               "$PHYDM"
           fi
 
-          # Makefile platform config — I386_PC = n, ARM64_RPI = y
           sed -i 's/^CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' rtl8188eus/Makefile
           sed -i 's/^CONFIG_PLATFORM_ARM64_RPI = n/CONFIG_PLATFORM_ARM64_RPI = y/' rtl8188eus/Makefile
 
           echo "=== Makefile platform config ==="
           grep -n 'CONFIG_PLATFORM_I386_PC\|CONFIG_PLATFORM_ARM64_RPI' rtl8188eus/Makefile
 
-      - name: Build 8188eu.ko (official guide method)
+      - name: Build 8188eu.ko
         working-directory: ${{ github.workspace }}/rtl8188eus
         run: |
           set -euo pipefail
@@ -122,8 +141,6 @@ jobs:
           fi
           echo "=== out tree ==="
           ls -la out/ || true
-          echo "=== 8188eu.ko check ==="
-          ls -la out/8188eu.ko || echo "8188eu.ko not found"
 
       - name: Upload artifacts
         if: always()
