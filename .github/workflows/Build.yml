@@ -707,24 +707,41 @@ jobs:
           cp -r /tmp/rtl8188eus/* drivers/net/wireless/realtek/rtl8188eu/
           rm -rf /tmp/rtl8188eus
 
-          # Fix Kconfig syntax
+          # === FIX 1: Kconfig syntax (---help--- → help) ===
           sed -i 's/---help---/help/g' drivers/net/wireless/realtek/rtl8188eu/Kconfig
 
-          # Remove unsupported warning flags from Makefile
-          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/Makefile
-          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/*/Makefile 2>/dev/null || true
-          sed -i 's/-Wno-cast-function-type//g' drivers/net/wireless/realtek/rtl8188eu/**/Makefile 2>/dev/null || true
+          # === FIX 2: Remove unsupported warning flags ===
+          find drivers/net/wireless/realtek/rtl8188eu -name 'Makefile' -type f | while read -r f; do
+            sed -i 's/-Wno-cast-function-type//g' "$f"
+          done
 
-          # Kconfig hook
+          # === FIX 3: Add -Wno-error=parentheses-equality to all Makefiles ===
+          find drivers/net/wireless/realtek/rtl8188eu -name 'Makefile' -type f | while read -r f; do
+            if grep -q '^ccflags-y' "$f"; then
+              sed -i 's/^ccflags-y += /ccflags-y += -Wno-error=parentheses-equality /' "$f"
+            fi
+          done
+
+          # === FIX 4: Extraneous parentheses in usb_halinit.c ===
+          sed -i 's/if ((IS_FULL_SPEED_USB(Adapter))/if (IS_FULL_SPEED_USB(Adapter)/g' \
+            drivers/net/wireless/realtek/rtl8188eu/hal/rtl8188e/usb/usb_halinit.c
+
+          # === Kconfig hook ===
           if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Kconfig; then
             echo 'source "drivers/net/wireless/realtek/rtl8188eu/Kconfig"' >> drivers/net/wireless/realtek/Kconfig
           fi
-          # Makefile hook
+
+          # === Makefile hook ===
           if ! grep -q "rtl8188eu" drivers/net/wireless/realtek/Makefile; then
             echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eu/' >> drivers/net/wireless/realtek/Makefile
           fi
+
           echo "=== rtl8188eu in tree ==="
           ls drivers/net/wireless/realtek/rtl8188eu/ | head -10
+          echo "=== Kconfig check ==="
+          head -10 drivers/net/wireless/realtek/rtl8188eu/Kconfig
+          echo "=== usb_halinit fix check ==="
+          grep -n 'IS_FULL_SPEED_USB' drivers/net/wireless/realtek/rtl8188eu/hal/rtl8188e/usb/usb_halinit.c | head -5
 
       - name: Clean dirty flag
         working-directory: kernel_workspace
