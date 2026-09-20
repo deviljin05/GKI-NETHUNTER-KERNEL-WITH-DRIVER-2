@@ -329,14 +329,15 @@ jobs:
           # only a matching ARCH/ABI, so this is safe against the clang-built GKI kernel.
           make -C "${KDIR}" M="$(pwd)" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            CONFIG_RTL8188EU=m CONFIG_RTL8188E=y CONFIG_MULTIDRV=n \
             EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
             modules 2>&1 | tee build.log
 
           KO=$(find . -maxdepth 1 -name "*.ko" | head -n1)
           if [ -z "$KO" ]; then
             echo "::error::rtl8188eus build did not produce a .ko file — no object files were compiled."
-            echo "::error::This usually means the driver's obj-m target wasn't selected. Dumping the top of its Makefile for debugging:"
-            head -n 60 Makefile
+            echo "::error::Dumping the obj-m / MODULE_NAME / KERNELRELEASE logic from the Makefile for debugging:"
+            grep -n -E "obj-\\\$|MODULE_NAME|KERNELRELEASE|CONFIG_RTL8188EU" Makefile || true
             echo "----- last 40 lines of build.log -----"
             tail -n 40 build.log
             exit 1
