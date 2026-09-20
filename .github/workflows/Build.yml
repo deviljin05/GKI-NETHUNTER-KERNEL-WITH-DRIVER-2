@@ -43,20 +43,22 @@ jobs:
             -b common-${{ env.VERSION }}-lts --depth=1
           repo sync -c --current-branch --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Add driver configs
+      - name: Add driver configs (GKI-safe)
+        working-directory: kernel_workspace/common/arch/arm64/configs
         run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          {
-            echo "CONFIG_CFG80211=m"
-            echo "CONFIG_MAC80211=m"
-            echo "CONFIG_MAC80211_LEDS=y"
-            echo "CONFIG_RTL8188EU=m"
-            echo "CONFIG_WLAN_VENDOR_REALTEK=y"
-            echo "CONFIG_CRYPTO_ARC4=m"
-            echo "CONFIG_CRYPTO_MICHAEL_MIC=m"
-            echo "CONFIG_CRC_CCITT=m"
-            echo "CONFIG_CRC_ITU_T=m"
-          } >> gki_defconfig
+          set -euo pipefail
+          # GKI defconfig mein CFG80211, MAC80211, MAC80211_LEDS already =y hain
+          # Unhe override mat karo — sirf naye configs add karo
+          cat >> gki_defconfig << 'EOF'
+          CONFIG_RTL8188EU=m
+          CONFIG_WLAN_VENDOR_REALTEK=y
+          CONFIG_CRYPTO_ARC4=m
+          CONFIG_CRYPTO_MICHAEL_MIC=m
+          CONFIG_CRC_CCITT=m
+          CONFIG_CRC_ITU_T=m
+          EOF
+          echo "=== tail of gki_defconfig ==="
+          tail -10 gki_defconfig
 
       - name: Build kernel (Module.symvers generate karo)
         working-directory: kernel_workspace
@@ -77,14 +79,18 @@ jobs:
           set -euo pipefail
           git clone --depth 1 https://gitlab.com/SimplyCEO/rtl8188eus.git rtl8188eus
 
+          # Kconfig syntax fix
           sed -i 's/---help---/help/g' rtl8188eus/Kconfig || true
 
+          # phydm_debug.c fix — naye GCC -Werror=stringop-overread
           PHYDM=rtl8188eus/hal/phydm/phydm_debug.c
           if [ -f "$PHYDM" ]; then
-            sed -i 's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' "$PHYDM"
+            sed -i \
+              's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' \
+              "$PHYDM"
           fi
 
-          # I386_PC = n, ARM64_RPI = y
+          # Makefile platform config — I386_PC = n, ARM64_RPI = y
           sed -i 's/^CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' rtl8188eus/Makefile
           sed -i 's/^CONFIG_PLATFORM_ARM64_RPI = n/CONFIG_PLATFORM_ARM64_RPI = y/' rtl8188eus/Makefile
 
@@ -117,6 +123,8 @@ jobs:
           fi
           echo "=== out tree ==="
           ls -la out/ || true
+          echo "=== 8188eu.ko check ==="
+          ls -la out/8188eu.ko || echo "8188eu.ko not found"
 
       - name: Upload artifacts
         if: always()
