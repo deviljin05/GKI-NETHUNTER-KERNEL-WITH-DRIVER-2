@@ -708,13 +708,14 @@ jobs:
           rm -rf /tmp/rtl8188eus
 
           DRV=drivers/net/wireless/realtek/rtl8188eu
-          # Clang-compatible flags only + ignore unknown
           WFLAGS="-Wno-error=parentheses-equality -Wno-error=misleading-indentation -Wno-error=tautological-overlap-compare -Wno-error=tautological-constant-out-of-range-compare -Wno-error=constant-conversion -Wno-error=shift-count-overflow -Wno-error=pointer-sign -Wno-error=address-of-packed-member -Wno-error=enum-conversion -Wno-error=incompatible-pointer-types-discards-qualifiers -Wno-unknown-warning-option"
+          INCFLAGS="-I\$(src)/include -I\$(src)/os_dep/linux -I\$(src)/hal -I\$(src)/hal/rtl8188e -I\$(src)/hal/phydm"
+          ALLFLAGS="$WFLAGS $INCFLAGS"
 
-          # === FIX 1: Kconfig syntax (---help--- → help) ===
+          # === FIX 1: Kconfig syntax ===
           sed -i 's/---help---/help/g' "$DRV/Kconfig"
 
-          # === FIX 2: Remove unsupported warning flags from all Makefiles ===
+          # === FIX 2: Remove unsupported warning flags ===
           find "$DRV" -name 'Makefile' -type f | while read -r f; do
             sed -i 's/-Wno-cast-function-type//g' "$f"
             sed -i 's/-Wno-misleading-indentation//g' "$f"
@@ -725,27 +726,27 @@ jobs:
             sed -i 's/-Werror=array-bounds//g' "$f"
           done
 
-          # === FIX 3: Add -Wno-error flags to ALL Makefiles ===
+          # === FIX 3: Add flags + include paths to ALL Makefiles ===
           find "$DRV" -name 'Makefile' -type f | while read -r f; do
             if grep -q '^ccflags-y' "$f"; then
-              sed -i "s|^ccflags-y += |ccflags-y += $WFLAGS |" "$f"
+              sed -i "s|^ccflags-y += |ccflags-y += $ALLFLAGS |" "$f"
             else
-              echo "ccflags-y += $WFLAGS" >> "$f"
+              echo "ccflags-y += $ALLFLAGS" >> "$f"
             fi
           done
 
-          # === FIX 3b: Root Makefile mein bhi ccflags-y add karo ===
+          # === FIX 3b: Root Makefile ===
           if grep -q '^ccflags-y' "$DRV/Makefile"; then
-            sed -i "s|^ccflags-y += |ccflags-y += $WFLAGS |" "$DRV/Makefile"
+            sed -i "s|^ccflags-y += |ccflags-y += $ALLFLAGS |" "$DRV/Makefile"
           else
-            echo "ccflags-y += $WFLAGS" >> "$DRV/Makefile"
+            echo "ccflags-y += $ALLFLAGS" >> "$DRV/Makefile"
           fi
 
-          # === FIX 4: Extraneous parentheses in usb_halinit.c ===
+          # === FIX 4: usb_halinit.c ===
           sed -i 's/if ((IS_FULL_SPEED_USB(Adapter))/if (IS_FULL_SPEED_USB(Adapter)/g' \
             "$DRV/hal/rtl8188e/usb/usb_halinit.c" || true
 
-          # === FIX 5: Tautological comparison in phydm_debug.c ===
+          # === FIX 5: phydm_debug.c tautological ===
           if [ -f "$DRV/hal/phydm/phydm_debug.c" ]; then
             sed -i 's/rx_ht != 2 || rx_ht != 1/rx_ht != 2 \&\& rx_ht != 1/g' \
               "$DRV/hal/phydm/phydm_debug.c" || true
@@ -771,13 +772,11 @@ jobs:
 
           echo "=== rtl8188eu in tree ==="
           ls "$DRV/" | head -10
-          echo "=== Kconfig head ==="
-          head -5 "$DRV/Kconfig"
-          echo "=== usb_intf 0x8176 check ==="
-          grep -n '0x8176' "$DRV/os_dep/linux/usb_intf.c" | head -3 || true
-          echo "=== phydm_debug fix check ==="
-          grep -n 'rx_ht != 2' "$DRV/hal/phydm/phydm_debug.c" | head -3 || true
-
+          echo "=== include dir check ==="
+          ls "$DRV/include/" | head -5 || echo "include dir missing!"
+          echo "=== drv_types.h check ==="
+          find "$DRV" -name "drv_types.h" | head -3 || echo "drv_types.h not found!"
+          
       - name: Clean dirty flag
         working-directory: kernel_workspace
         run: |
