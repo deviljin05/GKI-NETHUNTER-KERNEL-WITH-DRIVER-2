@@ -1,4 +1,4 @@
-name: Build GKI Drivers (SimplyCEO official method, fragment merge)
+name: Build GKI Drivers (SimplyCEO external module)
 
 on:
   workflow_dispatch:
@@ -43,53 +43,15 @@ jobs:
             -b common-${{ env.VERSION }}-lts --depth=1
           repo sync -c --current-branch --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Create driver fragment
-        working-directory: kernel_workspace/common/arch/arm64/configs
-        run: |
-          set -euo pipefail
-          cat > driver_gki.fragment << 'EOF'
-          CONFIG_RTL8188EU=m
-          CONFIG_CRYPTO_ARC4=m
-          EOF
-          echo "=== fragment ==="
-          cat driver_gki.fragment
-
-      - name: Patch build.config.db845c (FRAGMENT_CONFIG + PRE_DEFCONFIG_CMDS)
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          # db845c build config use karo, lekin fragment merge karo
-          cat > build.config.driver << 'EOF'
-          . ${ROOT_DIR}/${KERNEL_DIR}/build.config.common
-          . ${ROOT_DIR}/${KERNEL_DIR}/build.config.aarch64
-          BUILD_INITRAMFS=1
-          DEFCONFIG=gki_defconfig
-          FRAGMENT_CONFIG=${KERNEL_DIR}/arch/arm64/configs/driver_gki.fragment
-          PRE_DEFCONFIG_CMDS="KCONFIG_CONFIG=${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG} ${ROOT_DIR}/${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -r ${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/gki_defconfig ${ROOT_DIR}/${FRAGMENT_CONFIG}"
-          POST_DEFCONFIG_CMDS="rm ${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
-          MAKE_GOALS="Image.lz4 modules"
-          EOF
-          echo "=== build.config.driver created ==="
-          cat build.config.driver
-
-      - name: Patch build.config.gki.aarch64 for fragment support
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          # GKI_DEFCONFIG_FRAGMENT support already exists in build.config.gki.aarch64
-          # Verify
-          tail -5 build.config.gki.aarch64
-
-      - name: Build kernel (fragment merge)
+      - name: Build kernel (Module.symvers generate karo)
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
           export KBUILD_BUILD_USER="builder"
           export KBUILD_BUILD_HOST="ci"
-          export GKI_DEFCONFIG_FRAGMENT="${ROOT_DIR}/common/arch/arm64/configs/driver_gki.fragment"
           LTO=thin \
           SKIP_MRPROPER=1 \
-          BUILD_CONFIG=common/build.config.driver \
+          BUILD_CONFIG=common/build.config.gki.aarch64 \
           USE_CCACHE=1 \
           CCACHE_DIR="${{ env.CCACHE_DIR }}" \
           build/build.sh -j"$(nproc)"
@@ -100,8 +62,10 @@ jobs:
           set -euo pipefail
           git clone --depth 1 https://gitlab.com/SimplyCEO/rtl8188eus.git rtl8188eus
 
+          # Kconfig syntax fix
           sed -i 's/---help---/help/g' rtl8188eus/Kconfig || true
 
+          # phydm_debug.c fix
           PHYDM=rtl8188eus/hal/phydm/phydm_debug.c
           if [ -f "$PHYDM" ]; then
             sed -i \
@@ -109,21 +73,28 @@ jobs:
               "$PHYDM"
           fi
 
+          # Makefile platform config — I386_PC = n, ARM64_RPI = y
           sed -i 's/^CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' rtl8188eus/Makefile
           sed -i 's/^CONFIG_PLATFORM_ARM64_RPI = n/CONFIG_PLATFORM_ARM64_RPI = y/' rtl8188eus/Makefile
 
           echo "=== Makefile platform config ==="
           grep -n 'CONFIG_PLATFORM_I386_PC\|CONFIG_PLATFORM_ARM64_RPI' rtl8188eus/Makefile
 
-      - name: Build 8188eu.ko
+      - name: Build 8188eu.ko (external module)
         working-directory: ${{ github.workspace }}/rtl8188eus
         run: |
           set -euo pipefail
+          KSRC=$GITHUB_WORKSPACE/kernel_workspace/out/android12-5.10/common
+          KVER=$(cat $KSRC/include/config/kernel.release 2>/dev/null || echo "5.10.269-BLAZE-KSUNv1-STABLE")
+          echo "KSRC=$KSRC"
+          echo "KVER=$KVER"
+          ls -la $KSRC/Module.symvers || echo "Module.symvers not found"
+
           make -j$(nproc) \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            KSRC=$GITHUB_WORKSPACE/kernel_workspace/common \
-            KVER=5.10 \
+            KSRC=$KSRC \
+            KVER=$KVER \
             2>&1 | tee build.log || true
 
           echo "=== find .ko ==="
@@ -141,6 +112,8 @@ jobs:
           fi
           echo "=== out tree ==="
           ls -la out/ || true
+          echo "=== 8188eu.ko check ==="
+          ls -la out/8188eu.ko || echo "8188eu.ko not found"
 
       - name: Upload artifacts
         if: always()
