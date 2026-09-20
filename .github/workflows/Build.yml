@@ -1,4 +1,4 @@
-name: Build GKI Drivers (aircrack-ng official method)
+name: Build GKI Drivers (SimplyCEO official method)
 
 on:
   workflow_dispatch:
@@ -20,11 +20,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
-          sudo apt-get clean
-
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -41,9 +36,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Set up ccache
-        run: mkdir -p "${{ env.CCACHE_DIR }}"
-
       - name: Sync GKI kernel source
         run: |
           mkdir kernel_workspace && cd kernel_workspace
@@ -55,282 +47,18 @@ jobs:
         run: |
           cd kernel_workspace/common/arch/arm64/configs
           {
-            echo "CONFIG_PACKET_DIAG=y"
-            echo "CONFIG_USB_G_HID=y"
-            echo "CONFIG_USB_CONFIGFS_F_HID=y"
-            echo "CONFIG_FW_LOADER=y"
-            echo "CONFIG_FW_LOADER_USER_HELPER=y"
-            echo "CONFIG_USB_SUPPORT=y"
-            echo "CONFIG_USB_NET_DRIVERS=y"
-            echo "CONFIG_USB_USBNET=y"
-            echo "CONFIG_USB_CDC_COMPOSITE=y"
-            echo "CONFIG_USB_CONFIGFS=y"
-            echo "CONFIG_USB_CONFIGFS_ACM=y"
-            echo "CONFIG_USB_CONFIGFS_RNDIS=y"
-            echo "CONFIG_USB_CONFIGFS_MASS_STORAGE=y"
-            echo "CONFIG_USB_ACM=y"
-            echo "CONFIG_USB_SERIAL=y"
-            echo "CONFIG_USB_SERIAL_GENERIC=y"
-            echo "CONFIG_USB_SERIAL_CP210X=y"
-            echo "CONFIG_USB_SERIAL_FTDI_SIO=y"
-            echo "CONFIG_USB_SERIAL_PL2303=y"
-            echo "CONFIG_USB_SERIAL_CH341=y"
-            echo "CONFIG_USB_SERIAL_ARK3116=y"
-            echo "CONFIG_USB_NET_CDCETHER=y"
-            echo "CONFIG_USB_NET_CDC_NCM=y"
-            echo "CONFIG_USB_NET_RNDIS_HOST=y"
-            echo "CONFIG_USB_NET_RNDIS_WLAN=y"
-            echo "CONFIG_RFKILL=y"
-            echo "CONFIG_RFKILL_LEDS=y"
-            echo "CONFIG_BT=y"
-            echo "CONFIG_BT_L2CAP=y"
-            echo "CONFIG_BT_SCO=y"
-            echo "CONFIG_BT_RFCOMM=y"
-            echo "CONFIG_BT_BNEP=y"
-            echo "CONFIG_BT_HIDP=y"
-            echo "CONFIG_BT_HCIUART_H4=y"
-            echo "CONFIG_BT_HCIUART_BCSP=y"
-            echo "CONFIG_BT_HCIUART_LL=y"
-            echo "CONFIG_CAN=y"
-            echo "CONFIG_CAN_RAW=y"
-            echo "CONFIG_CAN_BCM=y"
-            echo "CONFIG_CAN_GW=y"
-            echo "CONFIG_CAN_J1939=y"
-            echo "CONFIG_CAN_ISOTP=y"
-            echo "CONFIG_CAN_SLCAN=y"
-            echo "CONFIG_CAN_VCAN=y"
-            echo "CONFIG_CAN_DEV=y"
-            echo "CONFIG_CAN_CALC_BITTIMING=y"
-            echo "CONFIG_CAN_FLEXCAN=y"
-            echo "CONFIG_CAN_8DEV_USB=y"
-            echo "CONFIG_CAN_EMS_USB=y"
-            echo "CONFIG_CAN_ESD_USB2=y"
-            echo "CONFIG_CAN_GS_USB=y"
-            echo "CONFIG_CAN_KVASER_USB=y"
-            echo "CONFIG_CAN_MCBA_USB=y"
-            echo "CONFIG_CAN_PEAK_USB=y"
-            echo "CONFIG_CAN_UCAN=y"
-            echo "CONFIG_CAN_USB=y"
-            echo "CONFIG_CAN_AT91=y"
-            echo "CONFIG_CAN_SJA1000=y"
-            echo "CONFIG_CAN_SJA1000_PLATFORM=y"
-            echo "CONFIG_CAN_SJA1000_ISA=y"
-            echo "CONFIG_CAN_SJA1000_ECAN=y"
-            echo "CONFIG_NFS_FS=y"
-            echo "CONFIG_NFS_V3=y"
-            echo "CONFIG_NFS_V4=y"
-            echo "CONFIG_NFSD=y"
-            echo "CONFIG_WIREGUARD=y"
-            echo "CONFIG_BT_HCIBCM203X=y"
-            echo "CONFIG_BT_HCIBPA10X=y"
-            echo "CONFIG_BT_HCIBFUSB=y"
-            echo "CONFIG_BT_HCIVHCI=y"
-            echo "CONFIG_NETWORK_FILESYSTEMS=y"
-            echo "CONFIG_NFS_V2=y"
-            echo "CONFIG_NFSD_V3=y"
-            echo "CONFIG_NFSD_V4=y"
             echo "CONFIG_CFG80211=m"
             echo "CONFIG_MAC80211=m"
             echo "CONFIG_MAC80211_LEDS=y"
-            echo "CONFIG_NL80211_TESTMODE=y"
-            echo "CONFIG_WLAN_VENDOR_ATH=y"
-            echo "CONFIG_ATH9K_HTC=m"
-            echo "CONFIG_ATH_CARDS=m"
-            echo "CONFIG_CARL9170=m"
-            echo "CONFIG_WLAN_VENDOR_RALINK=y"
-            echo "CONFIG_RT2X00=m"
-            echo "CONFIG_RT2X00_LIB=m"
-            echo "CONFIG_RT2X00_LIB_USB=m"
-            echo "CONFIG_RT2800USB=m"
-            echo "CONFIG_RT2800USB_RT33XX=y"
-            echo "CONFIG_RT2800USB_RT35XX=y"
-            echo "CONFIG_RT2800USB_RT53XX=y"
-            echo "CONFIG_RT2800USB_RT55XX=y"
-            echo "CONFIG_RT73USB=m"
-            echo "CONFIG_WLAN_VENDOR_REALTEK=y"
-            echo "CONFIG_RTL8187=m"
-            echo "CONFIG_RTL8192CU=m"
-            echo "CONFIG_RTL8XXXU=m"
-            echo "CONFIG_RTL8XXXU_UNTESTED=y"
             echo "CONFIG_RTL8188EU=m"
-            echo "CONFIG_WLAN_VENDOR_MEDIATEK=y"
-            echo "CONFIG_MT7601U=m"
-            echo "CONFIG_MT76_CORE=m"
-            echo "CONFIG_MT76_USB=m"
-            echo "CONFIG_MT76x0_COMMON=m"
-            echo "CONFIG_MT76x0U=m"
-            echo "CONFIG_MT76x2_COMMON=m"
-            echo "CONFIG_MT76x2U=m"
+            echo "CONFIG_WLAN_VENDOR_REALTEK=y"
             echo "CONFIG_CRYPTO_ARC4=m"
-            echo "CONFIG_CRYPTO_ECB=m"
             echo "CONFIG_CRYPTO_MICHAEL_MIC=m"
-            echo "CONFIG_CRYPTO_CCMP=m"
-            echo "CONFIG_CRYPTO_TKIP=m"
             echo "CONFIG_CRC_CCITT=m"
             echo "CONFIG_CRC_ITU_T=m"
-            echo "CONFIG_MODULES=y"
-            echo "CONFIG_MODULE_UNLOAD=y"
-            echo "CONFIG_MODVERSIONS=y"
-            echo "CONFIG_MEDIA_DIGITAL_TV_SUPPORT=y"
-            echo "CONFIG_MEDIA_SDR_SUPPORT=y"
-            echo "CONFIG_USB_AIRSPY=y"
-            echo "CONFIG_USB_HACKRF=y"
-            echo "CONFIG_USB_MSI2500=y"
-            echo "CONFIG_MEDIA_SUBDRV_AUTOSELECT=n"
-            echo "CONFIG_DVB_RTL2830=y"
-            echo "CONFIG_DVB_RTL2832=y"
-            echo "CONFIG_DVB_RTL2832_SDR=y"
-            echo "CONFIG_DVB_SI2168=y"
-            echo "CONFIG_DVB_ZD1301_DEMOD=y"
-            echo "CONFIG_ZD1211RW=y"
-            echo "CONFIG_RTW88=m"
-            echo "CONFIG_RTW88_CORE=m"
-            echo "CONFIG_RTW88_USB=m"
-            echo "CONFIG_RTW88_8812AU=m"
-            echo "CONFIG_RTW88_8814AU=m"
-            echo "CONFIG_RTW88_8821AU=m"
-            echo "CONFIG_RTW88_8822BU=m"
-            echo "CONFIG_RTW88_8821CU=m"
-            echo "CONFIG_RTW88_8723DU=m"
-            echo "CONFIG_NAMESPACES=y"
-            echo "CONFIG_NET_NS=y"
-            echo "CONFIG_CGROUPS=y"
-            echo "CONFIG_PID_NS=y"
-            echo "CONFIG_USER_NS=y"
-            echo "CONFIG_DEVTMPFS=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
-            echo "CONFIG_IP_SET=y"
-            echo "CONFIG_IP_SET_HASH_IP=y"
-            echo "CONFIG_IP_SET_HASH_NET=y"
-            echo "CONFIG_NETFILTER_XT_SET=y"
-            echo "CONFIG_TMPFS_POSIX_ACL=y"
-            echo "CONFIG_TMPFS_XATTR=y"
           } >> gki_defconfig
 
-      - name: Apply NetHunter WiFi injection patches
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          python3 - <<'PYEOF'
-          import pathlib
-
-          def patch(path, old, new, label):
-              p = pathlib.Path(path)
-              if not p.exists():
-                  print(f"[skip] {label}: {path} not found")
-                  return
-              text = p.read_text()
-              n = text.count(old)
-              if n != 1:
-                  print(f"[WARN] {label}: expected 1 match, found {n} — skipping")
-                  return
-              p.write_text(text.replace(old, new, 1))
-              print(f"[ok] {label}")
-
-          patch(
-              "net/mac80211/tx.c",
-              "\t/*\n\t * Packet injection may want to control the sequence\n\t * number, if we have no matching interface then we\n\t * neither assign one ourselves nor ask the driver to.\n\t */\n\tif (unlikely(info->control.vif->type == NL80211_IFTYPE_MONITOR))\n\t\treturn TX_CONTINUE;\n",
-              "\t/*\n\t * Packet injection may want to control the sequence\n\t * number, so if an injected packet is found, skip\n\t * renumbering it. Also make the packet NO_ACK to avoid\n\t * excessive retries (ACKing and retrying should be\n\t * handled by the injecting application).\n\t */\n\tif (unlikely((info->flags & IEEE80211_TX_CTL_INJECTED) &&\n\t   !(tx->sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES))) {\n\t\tif (!ieee80211_has_morefrags(hdr->frame_control))\n\t\t\tinfo->flags |= IEEE80211_TX_CTL_NO_ACK;\n\t\treturn TX_CONTINUE;\n\t}\n",
-              "mac80211 injected packet seqno/NO_ACK",
-          )
-
-          patch(
-              "net/mac80211/tx.c",
-              "\tieee80211_set_qos_hdr(sdata, skb);\n\tieee80211_tx(sdata, sta, skb, false);\n",
-              "        // Don't overwrite QoS header in monitor mode\n        if (likely(info->control.vif->type != NL80211_IFTYPE_MONITOR)) {\n            ieee80211_set_qos_hdr(sdata, skb);\n        }\n\tieee80211_tx(sdata, sta, skb, false);\n",
-              "mac80211 skip QoS hdr in monitor mode",
-          )
-
-          patch(
-              "net/wireless/chan.c",
-              "\tif (!cfg80211_has_monitors_only(rdev))\n\t\treturn -EBUSY;\n",
-              "\t// Always allow user to change channel, even if there is another normal\n\t// virtual interface using the device.\n\t//if (!cfg80211_has_monitors_only(rdev))\n\t//\treturn -EBUSY;\n",
-              "cfg80211 monitor channel EBUSY removal",
-          )
-
-          patch(
-              "drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c",
-              "\tif (ieee80211_has_morefrags(tx_hdr->frame_control))\n\t\tflags |= RTL818X_TX_DESC_FLAG_MOREFRAG;\n",
-              "\n\t// When this flag is set the firmware waits untill ALL fragments have\n\t// reached the USB device. Then it sends the first fragment and waits\n\t// for ACKS's. Of course in monitor mode it won't detect these ACK's.\n\tif (ieee80211_has_morefrags(tx_hdr->frame_control))\n\t{\n\t\t// If info->control.vif is NULL it's most likely in monitor mode\n\t\tif (likely(info->control.vif != NULL && info->control.vif->type != NL80211_IFTYPE_MONITOR)) {\n\t\t\tflags |= RTL818X_TX_DESC_FLAG_MOREFRAG;\n\t\t}\n\t}\n",
-              "rtl8187 monitor MOREFRAG fix",
-          )
-
-          patch(
-              "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
-              "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tu32 filter = STA_RX_FILTER;\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl)\n\t\tfilter |= RX_FILTER_CTRL;\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);\n}\n",
-              "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tstruct zd_ioreq32 ioreqs[] = {\n\t\t{CR_RX_FILTER, STA_RX_FILTER},\n\t\t{ CR_SNIFFER_ON, 0U },\n\t};\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl) {\n\t\tioraqs[0].value |= 0xFFFFFFFF;\n\t\tioraqs[1].value = 0x1;\n\t}\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));\n}\n",
-              "zd1211rw set_rx_filter sniffer fix",
-          )
-
-          patch(
-              "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
-              "\tif (status->frame_status & ZD_RX_ERROR) {\n",
-              "\tif ((status->frame_status & ZD_RX_ERROR) || \n\t\t(status->frame_status & ~0x21)) {\n",
-              "zd1211rw monitor frame acceptance",
-          )
-
-          patch(
-              "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
-              "\tieee80211_hw_set(hw, SIGNAL_UNSPEC);\n",
-              "\tieee80211_hw_set(hw, SIGNAL_DBM);\n",
-              "zd1211rw SIGNAL_DBM",
-          )
-          PYEOF
-
-      - name: Clean dirty flag
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          sed -i 's/-dirty//' common/scripts/setlocalversion
-          cd common
-          git add -A
-          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" \
-            commit -m "Clean dirty flag" --allow-empty -q
-
-      - name: Apply custom kernel branding
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          mv scripts/setlocalversion scripts/setlocalversion.orig
-          chmod +x scripts/setlocalversion.orig
-          cat > scripts/setlocalversion << 'SETLOCALVERSION_EOF'
-          #!/bin/sh
-          printf -- '-BLAZE-KSUNv1-STABLE\n'
-          SETLOCALVERSION_EOF
-          chmod +x scripts/setlocalversion
-
-      - name: Disable strict defconfig verification
-        working-directory: kernel_workspace
-        run: sed -i 's/check_defconfig//' ./common/build.config.gki
-
-      - name: Disable modules list verification
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          for f in common/build.config.gki common/build.config.gki.aarch64 common/build.config.common common/build.config.aarch64; do
-            [ -f "$f" ] || continue
-            sed -i 's/^MODULES_LIST=.*/MODULES_LIST=/' "$f"
-            sed -i 's/^MODULES_ORDER=.*/MODULES_ORDER=/' "$f"
-            sed -i 's/^TRIM_NONLISTED_KMI=.*/TRIM_NONLISTED_KMI=0/' "$f"
-            sed -i 's/^KMI_SYMBOL_LIST=.*/KMI_SYMBOL_LIST=/' "$f"
-            sed -i 's/^KMI_SYMBOL_LIST_STRICT_MODE=.*/KMI_SYMBOL_LIST_STRICT_MODE=0/' "$f"
-            sed -i 's/^KMI_ENFORCED=.*/KMI_ENFORCED=0/' "$f"
-          done
-
-      - name: Ensure generic ld exists
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          LLD_PATH=$(find prebuilts-master -type f -name 'ld.lld' | head -n1)
-          if [ -n "$LLD_PATH" ]; then
-            BIN_DIR=$(dirname "$LLD_PATH")
-            [ -e "$BIN_DIR/ld" ] || ln -s ld.lld "$BIN_DIR/ld"
-          fi
-
-      - name: Build kernel (in-tree drivers)
+      - name: Build kernel (Module.symvers generate karo)
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -343,48 +71,36 @@ jobs:
           CCACHE_DIR="${{ env.CCACHE_DIR }}" \
           build/build.sh -j"$(nproc)"
 
-      - name: Clone aircrack-ng rtl8188eus driver (official guide method)
-        working-directory: kernel_workspace
+      - name: Clone SimplyCEO rtl8188eus driver (official guide)
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          # Official guide: driver kernel source ke PEEECHE rakho
-          git clone --depth 1 https://github.com/aircrack-ng/rtl8188eus rtl8188eus
+          git clone --depth 1 https://gitlab.com/SimplyCEO/rtl8188eus.git rtl8188eus
 
-          # Kconfig syntax fix
           sed -i 's/---help---/help/g' rtl8188eus/Kconfig || true
 
-          # phydm_debug.c fix — naye GCC -Werror=stringop-overread
           PHYDM=rtl8188eus/hal/phydm/phydm_debug.c
           if [ -f "$PHYDM" ]; then
-            sed -i \
-              's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' \
-              "$PHYDM"
+            sed -i 's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' "$PHYDM"
           fi
 
-          echo "=== driver cloned at $(pwd)/rtl8188eus ==="
-          ls -la rtl8188eus/ | head -10
+          # I386_PC = n, ARM64_RPI = y
+          sed -i 's/^CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' rtl8188eus/Makefile
+          sed -i 's/^CONFIG_PLATFORM_ARM64_RPI = n/CONFIG_PLATFORM_ARM64_RPI = y/' rtl8188eus/Makefile
+
+          echo "=== Makefile platform config ==="
+          grep -n 'CONFIG_PLATFORM_I386_PC\|CONFIG_PLATFORM_ARM64_RPI' rtl8188eus/Makefile
 
       - name: Build 8188eu.ko (official guide method)
-        working-directory: ${{ github.workspace }}/kernel_workspace/rtl8188eus
+        working-directory: ${{ github.workspace }}/rtl8188eus
         run: |
           set -euo pipefail
-
-          # Official guide ke environment variables
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          # KBUILD_KVER — kernel.release se lo
-          KVER=$(cat $GITHUB_WORKSPACE/kernel_workspace/common/include/config/kernel.release 2>/dev/null || echo "5.10.269-BLAZE-KSUNv1-STABLE")
-          export KBUILD_KVER="$KVER"
-          echo "KBUILD_KVER=$KBUILD_KVER"
-
-          # Driver folder mein make karo — guide ke mutabiq
-          make \
+          make -j$(nproc) \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            -C $GITHUB_WORKSPACE/kernel_workspace/common \
-            M=$PWD \
-            modules 2>&1 | tee build.log || true
+            KSRC=$GITHUB_WORKSPACE/kernel_workspace/common \
+            KVER=5.10 \
+            2>&1 | tee build.log || true
 
           echo "=== find .ko ==="
           find . -name "*.ko" -type f || true
@@ -395,118 +111,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           mkdir -p out
-          if [ -d kernel_workspace/rtl8188eus ]; then
-            find kernel_workspace/rtl8188eus -name "8188eu.ko" -exec cp {} out/ \; || true
-          fi
-          if [ -d kernel_workspace/out ]; then
-            find kernel_workspace/out -name "*.ko" -exec cp {} out/ \; || true
+          if [ -d rtl8188eus ]; then
+            find rtl8188eus -name "8188eu.ko" -exec cp {} out/ \; || true
+            find rtl8188eus -name "*.ko" -exec cp {} out/ \; || true
           fi
           echo "=== out tree ==="
           ls -la out/ || true
-          echo "=== 8188eu.ko check ==="
-          ls -la out/8188eu.ko || echo "8188eu.ko not found"
-
-      - name: Generate Wireless Magisk Module
-        if: always()
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          mkdir -p wireless_module/system/lib/modules
-          mkdir -p wireless_module/META-INF/com/google/android
-
-          cp out/*.ko wireless_module/system/lib/modules/ 2>/dev/null || true
-          COUNT=$(find wireless_module/system/lib/modules -name "*.ko" | wc -l)
-          echo "Packaging ${COUNT} .ko modules"
-          ls -la wireless_module/system/lib/modules/ | head -40
-
-          cat > wireless_module/module.prop << 'EOF'
-          id=Wireless-LKM
-          name=NetHunter Wireless LKM
-          version=v1
-          versionCode=1
-          author=Blaze
-          description=NetHunter wireless kernel modules
-          EOF
-
-          cat > wireless_module/service.sh << 'EOF'
-          #!/system/bin/sh
-          sleep 25
-          LOG=/data/local/tmp/nethunter_wireless.log
-          MODDIR=/data/adb/modules/Wireless-LKM/system/lib/modules
-          echo "===== $(date) =====" >> $LOG
-          echo /vendor/firmware > /sys/module/firmware_class/parameters/path 2>>$LOG
-
-          load(){
-            MOD="$1"
-            if [ -f "$MODDIR/$MOD.ko" ]; then
-              echo "Loading $MOD" >> $LOG
-              insmod "$MODDIR/$MOD.ko" >>$LOG 2>&1
-            else
-              echo "$MOD missing" >> $LOG
-            fi
-          }
-
-          load cfg80211
-          load mac80211
-
-          load ath
-          load ath9k_hw
-          load ath9k_common
-          load ath9k_htc
-          load carl9170
-
-          load rt2x00lib
-          load rt2x00usb
-          load rt2800lib
-          load rt2800usb
-          load rt73usb
-
-          load rtl8187
-          load rtl8192cu
-          load rtl8xxxu
-          load 8188eu
-
-          load mt7601u
-          load mt76
-          load mt76-usb
-          load mt76x0-common
-          load mt76x0u
-          load mt76x2-common
-          load mt76x2u
-
-          load rtw88_core
-          load rtw88_usb
-          load rtw88_8812au
-          load rtw88_8814au
-          load rtw88_8821au
-          load rtw88_8822bu
-          load rtw88_8821cu
-          load rtw88_8723du
-
-          load zd1211rw
-
-          load crc-itu-t
-          load michael_mic
-
-          dmesg | grep -i -E "cfg80211|mac80211|rtl|rtw88|mt76|zd1211|8188eu|firmware" >> $LOG 2>&1
-          EOF
-          chmod +x wireless_module/service.sh
-
-          cat > wireless_module/META-INF/com/google/android/update-binary << 'EOF'
-          #!/sbin/sh
-          mount /data 2>/dev/null
-          unzip -o "$3" 'system/*' -d /data/adb/modules/Wireless-LKM/ 2>/dev/null
-          cp -rf service.sh /data/adb/modules/Wireless-LKM/
-          cp -rf module.prop /data/adb/modules/Wireless-LKM/
-          touch /data/adb/modules/Wireless-LKM/update
-          exit 0
-          EOF
-          chmod +x wireless_module/META-INF/com/google/android/update-binary
-
-          cd wireless_module
-          zip -r9 -q "$GITHUB_WORKSPACE/${{ github.event.inputs.device_name }}-Wireless_LKM.zip" .
-          echo "Magisk module: $GITHUB_WORKSPACE/${{ github.event.inputs.device_name }}-Wireless_LKM.zip"
-          ls -lh "$GITHUB_WORKSPACE"/*.zip
 
       - name: Upload artifacts
         if: always()
@@ -514,7 +124,7 @@ jobs:
         with:
           name: ${{ github.event.inputs.device_name }}-drivers
           path: |
-            ${{ github.workspace }}/*.zip
-            ${{ github.workspace }}/out/*.ko
+            ${{ github.workspace }}/out/**/*
+            ${{ github.workspace }}/rtl8188eus/build.log
           if-no-files-found: warn
           retention-days: 14
