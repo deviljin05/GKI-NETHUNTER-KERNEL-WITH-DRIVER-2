@@ -1,24 +1,12 @@
-name: Build Custom GKI Kernel (Wild KSU + SUSFS + BBRv3)
+name: Build GKI Drivers (aircrack-ng rtl8188eus only)
 
 on:
   workflow_dispatch:
     inputs:
-      os_patch_level:
-        description: "Kernel branch tag — 'lts' tracks the rolling LTS branch (recommended, always current)"
-        required: true
-        default: "lts"
-      susfs_commit:
-        description: "SUSFS commit hash (leave empty = latest on gki-android12-5.10 branch, i.e. latest SUSFS release)"
-        required: false
-        default: ""
       device_name:
-        description: "Optional label for artifact naming"
-        required: false
-        default: "gki-custom"
-      enable_bbg:
-        description: "Enable Baseband Guard (BBG) — LSM that blocks unauthorized writes to modem/bootloader partitions, protects against brick from malicious root modules"
+        description: "Artifact label"
         required: true
-        default: "true"
+        default: "gki-drivers"
 
 env:
   VERSION: android12-5.10
@@ -27,7 +15,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 150
+    timeout-minutes: 120
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -60,321 +48,27 @@ jobs:
         run: |
           mkdir kernel_workspace && cd kernel_workspace
           repo init -u https://android.googlesource.com/kernel/manifest \
-            -b common-${{ env.VERSION }}-${{ github.event.inputs.os_patch_level }} --depth=1
+            -b common-${{ env.VERSION }}-lts --depth=1
           repo sync -c --current-branch --no-clone-bundle --no-tags -j"$(nproc)"
 
-      - name: Detect kernel sublevel
-        working-directory: kernel_workspace
-        run: |
-          SUBLEVEL="$(grep -m1 '^SUBLEVEL = ' common/Makefile | awk '{print $3}')"
-          echo "Detected SUBLEVEL: $SUBLEVEL"
-          echo "SUBLEVEL=${SUBLEVEL}" >> "$GITHUB_ENV"
-
-      - name: Clone SUSFS4KSU (latest = current SUSFS release)
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs4ksu
-          cd susfs4ksu
-          if [ -n "${{ github.event.inputs.susfs_commit }}" ]; then
-            git checkout "${{ github.event.inputs.susfs_commit }}"
-          fi
-          echo "SUSFS_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo "SUSFS commit in use: $(git rev-parse HEAD) — $(git log -1 --format=%s)"
-
-      - name: Set SUSFS, Ptrace, eBPF & Unicode Configs
-        run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          {
-            echo "CONFIG_KSU=y"
-            echo "CONFIG_KSU_SUSFS=y"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-            
-            # --- PTRACE FIXES & HARDENING CONFIGS ---
-            echo "CONFIG_HAVE_ARCH_PTRACE=y"
-            echo "CONFIG_PTRACE=y"
-            
-            # --- FULL eBPF SUPPORT CONFIGS & PATCHES ---
-            echo "CONFIG_BPF=y"
-            echo "CONFIG_BPF_SYSCALL=y"
-            echo "CONFIG_BPF_JIT=y"
-            echo "CONFIG_BPF_JIT_ALWAYS_ON=y"
-            echo "CONFIG_NET_CLS_ACT=y"
-            echo "CONFIG_NET_ACT_BPF=y"
-            echo "CONFIG_NET_CLS_BPF=y"
-            echo "CONFIG_CGROUP_BPF=y"
-            echo "CONFIG_BPF_EVENTS=y"
-            echo "CONFIG_BPF_STREAM_PARSER=y"
-            echo "CONFIG_LWTUNNEL_BPF=y"
-            
-            # --- UNICODE & UTF-8 FIXES CONFIGS ---
-            echo "CONFIG_UNICODE=y"
-            echo "CONFIG_NLS_UTF8=y"
-            echo "CONFIG_NLS_CODEPAGE_437=y"
-            echo "CONFIG_NLS_ISO8859_1=y"
-          } >> gki_defconfig
-
-      - name: Copy SUSFS kernel patches
-        run: |
-          cd kernel_workspace/common
-          cp ../susfs4ksu/kernel_patches/fs/* ./fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ./
-
-      - name: Apply android12-5.10 pre-patch compatibility fixes
+      - name: Add aircrack-ng rtl8188eus driver (in-tree, latest master)
         working-directory: kernel_workspace/common
         run: |
           set -euo pipefail
-          if [ "${SUBLEVEL}" -le "43" ]; then
-            perl -i -pe 's/(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*\1\s*,/size_t this_len = min_t(size_t,/' fs/proc/base.c
-          fi
-          if [ "${SUBLEVEL}" -le "117" ]; then
-            sed -i '/^[[:space:]]*\/\*$/,/^[[:space:]]*u32 mask = mark->mask & IN_ALL_EVENTS;$/d' fs/notify/fdinfo.c
-            perl -i -pe 's/\bmask,\s*mark->ignored_mask/inotify_mark_user_mask(mark)/g' fs/notify/fdinfo.c
-            perl -i -pe 's/ignored_mask:%x/ignored_mask:0/g' fs/notify/fdinfo.c
-          fi
-
-      - name: Apply SUSFS kernel patch
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          if ! patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch; then
-            echo "::error::SUSFS patch failed to apply cleanly — .rej files below:"
-            find . -name "*.rej"
-            exit 1
-          fi
-
-      - name: Fix SUSFS set_nameidata argument mismatch
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          sed -i 's/set_nameidata(nd, old_dfd, fake_filename, NULL);/set_nameidata(nd, old_dfd, fake_filename);/g' fs/namei.c
-
-      - name: Revert android12-5.10 pre-patch compatibility fixes
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          if [ "${SUBLEVEL}" -le "43" ]; then
-            sed -i 's/^size_t this_len = min_t(size_t, count, PAGE_SIZE);$/int this_len = min_t(int, count, PAGE_SIZE);/' fs/proc/base.c
-          fi
-          if [ "${SUBLEVEL}" -le "117" ]; then
-            perl -i -pe 's/^(\s+if \(inode\) \{)/$1\n\t\t\/\*\n\t\t * IN_ALL_EVENTS represents all of the mask bits\n\t\t * that we expose to userspace.  There is at\n\t\t * least one bit (FS_EVENT_ON_CHILD) which is\n\t\t * used only internally to the kernel.\n\t\t *\/\n\t\tu32 mask = mark->mask & IN_ALL_EVENTS;/m' fs/notify/fdinfo.c
-            perl -i -pe 's/\binotify_mark_user_mask\(mark\)/mask, mark->ignored_mask/g' fs/notify/fdinfo.c
-            perl -i -pe 's/ignored_mask:0/ignored_mask:%x/g' fs/notify/fdinfo.c
-          fi
-
-      - name: Apply SUSFS show_pad fix (older sublevels only)
-        working-directory: kernel_workspace/common
-        run: |
-          if [ "${SUBLEVEL}" -le "209" ]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-          fi
-
-      - name: Setup KernelSU-Next (Wild KSU, dev-susfs)
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
-
-      - name: Fix KernelSU-Next (static.patch)
-        working-directory: kernel_workspace/common/KernelSU-Next
-        run: |
-          set -euo pipefail
-          cat > static.patch << 'STATIC_PATCH_EOF'
-          diff --git a/kernel/feature/selinux_hide.c b/kernel/feature/selinux_hide.c
-          index e1384d9..56e4cfe 100644
-          --- a/kernel/feature/selinux_hide.c
-          +++ b/kernel/feature/selinux_hide.c
-          @@ -35,12 +35,12 @@ bool ksu_selinux_hide_enabled __read_mostly = false;
-           bool ksu_selinux_hide_running __read_mostly = false;
-           
-           #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-          -static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
-          -                                               u32 *sid, u32 def_sid, gfp_t gfp_flags);
-          -static int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
-          -                                               u32 *scontext_len);
-          -static void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
-          -                                                 struct av_decision *avd);
-          +int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
-          +                                        u32 *sid, u32 def_sid, gfp_t gfp_flags);
-          +int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
-          +                                        u32 *scontext_len);
-          +void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
-          +                                          struct av_decision *avd);
-           static void (*security_dump_masked_av_fn)(struct policydb *policydb, struct context *scontext, struct context *tcontext,
-                                                     u16 tclass, u32 permissions, const char *reason) = NULL;
-           static void (*context_struct_compute_av_fn)(struct policydb *policydb, struct context *scontext,
-          STATIC_PATCH_EOF
-          patch -p1 --forward < static.patch || echo "::warning::static.patch did not apply — may already be fixed upstream, not fatal"
-
-      - name: Install Baseband Guard (BBG)
-        if: ${{ github.event.inputs.enable_bbg == 'true' }}
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-
-      - name: Configure Baseband Guard LSM
-        if: ${{ github.event.inputs.enable_bbg == 'true' }}
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
-
-      - name: Verify BBG installation
-        if: ${{ github.event.inputs.enable_bbg == 'true' }}
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          if grep -q "baseband_guard" common/security/Kconfig; then
-            echo "✓ BBG registered in common/security/Kconfig"
-            grep -n "baseband_guard" common/security/Kconfig || true
-          else
-            echo "::error::baseband_guard not found in common/security/Kconfig after setup — BBG install likely failed above"
-            exit 1
-          fi
-
-      - name: Record BBG version
-        if: ${{ github.event.inputs.enable_bbg == 'true' }}
-        working-directory: kernel_workspace/Baseband-guard
-        run: |
-          BBG_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-          echo "BBG_COMMIT=${BBG_COMMIT}" >> "$GITHUB_ENV"
-          echo "BBG commit: ${BBG_COMMIT}"
-
-      - name: Enable BBG config
-        if: ${{ github.event.inputs.enable_bbg == 'true' }}
-        run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          echo "CONFIG_BBG=y" >> gki_defconfig
-
-      - name: Apply BBRv3 backport
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wildpatches
-          BBRV3_PATCH="/tmp/wildpatches/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android12-5.10.patch"
-          if [ -f "$BBRV3_PATCH" ]; then
-            patch -p1 < "$BBRV3_PATCH" || {
-              echo "::warning::BBRv3 patch had rejects — check .rej files below (BBR v1 config below still gives working TCP congestion control even if this fails)";
-              find . -name "*.rej";
-            }
-          else
-            echo "::warning::BBRv3 patch not found at expected path — repo structure may have changed. Skipping; BBR (v1) below still applies."
-          fi
-
-          if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h; then
-            for p in sysctl_add_proc_dou8vec_minmax.patch sysctl_fix_data-races_in_proc_dou8vec_minmax.patch; do
-              PF="/tmp/wildpatches/common/bbrv3/$p"
-              [ -f "$PF" ] && { patch -p1 < "$PF" || echo "::warning::$p did not apply cleanly"; }
-            done
-          fi
-
-      - name: Set networking / TCP congestion configs
-        run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          {
-            echo "CONFIG_TCP_CONG_ADVANCED=y"
-            echo "CONFIG_TCP_CONG_BBR=y"
-            echo "CONFIG_TCP_CONG_CUBIC=y"
-            echo "CONFIG_TCP_CONG_BIC=y"
-            echo "CONFIG_TCP_CONG_WESTWOOD=y"
-            echo "CONFIG_TCP_CONG_HTCP=y"
-            echo "CONFIG_TCP_CONG_BBR3=y"
-            echo 'CONFIG_DEFAULT_TCP_CONG="bbr"'
-            echo "CONFIG_NET_SCH_FQ=y"
-            echo "CONFIG_NET_SCH_FQ_CODEL=y"
-            echo "CONFIG_NET_SCH_CAKE=y"
-          } >> gki_defconfig
-
-      - name: Apply safe daily-use optimizations (F2FS, ext4, freeze, swappiness, VFS)
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          patch_default() {
-            local label="$1" old_re="$2" new="$3"; shift 3
-            local files=("$@")
-            local d='/'
-            for f in "${files[@]}"; do
-              [ -f "$f" ] || continue
-              if grep -qE -- "$old_re" "$f"; then
-                if sed -i -E "s${d}${old_re}${d}${new}${d}" "$f"; then
-                  echo "  [ok] ${label} (in $f)"
-                  return 0
-                fi
-              fi
-            done
-            echo "::warning::'${label}' pattern not found, skipped"
-            return 1
-          }
-
-          echo "Reducing freeze timeout (20s->1s)"
-          patch_default "freeze_timeout_msecs 20000->1000" \
-            'freeze_timeout_msecs[[:space:]]*=[[:space:]]*20[[:space:]]*\*[[:space:]]*MSEC_PER_SEC;' \
-            'freeze_timeout_msecs = 1 * MSEC_PER_SEC;' \
-            kernel/power/process.c kernel/power/main.c kernel/power/suspend.c || true
-
-          echo "Reducing F2FS urgent GC sleep (500ms->50ms)"
-          patch_default "F2FS urgent GC sleep 500->50" \
-            '#define[[:space:]]+DEF_GC_THREAD_URGENT_SLEEP_TIME[[:space:]]+500' \
-            '#define DEF_GC_THREAD_URGENT_SLEEP_TIME\t50' \
-            fs/f2fs/gc.h fs/f2fs/f2fs.h || true
-
-          echo "Raising ext4 commit interval (5s->30s)"
-          patch_default "ext4/jbd2 commit interval 5s->30s" \
-            '#define[[:space:]]+JBD2_DEFAULT_MAX_COMMIT_AGE[[:space:]]+5' \
-            '#define JBD2_DEFAULT_MAX_COMMIT_AGE\t30' \
-            include/linux/jbd2.h fs/jbd2/journal.c || true
-
-          echo "Lowering vm_swappiness (60->30)"
-          patch_default "vm_swappiness 60->30" \
-            'int[[:space:]]+vm_swappiness[[:space:]]*=[[:space:]]*60;' \
-            'int vm_swappiness = 30;' \
-            mm/vmscan.c || true
-
-          echo "Reducing VFS cache pressure (100->50)"
-          patch_default "vfs_cache_pressure default 100->50" \
-            'int[[:space:]]+sysctl_vfs_cache_pressure[[:space:]]+__read_mostly[[:space:]]*=[[:space:]]*100;' \
-            'int sysctl_vfs_cache_pressure __read_mostly = 50;' \
-            fs/dcache.c || true
-
-      - name: Add MGLRU (multi-generational LRU)
-        run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          {
-            echo "CONFIG_LRU_GEN=y"
-            echo "CONFIG_LRU_GEN_ENABLED=y"
-          } >> gki_defconfig
-
-      - name: Add RTL8188EU driver (SimplyCEO, in-tree)
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/SimplyCEO/rtl8188eus \
+          git clone --depth 1 https://github.com/aircrack-ng/rtl8188eus \
             drivers/net/wireless/rtl8188eus
 
-          # Hook the new directory into Kbuild. Unconditional obj-m: no
-          # kernel CONFIG_* symbol to guess, no Kconfig wiring needed —
-          # it will build automatically as part of build/build.sh below.
+          # Kbuild hook: unconditional obj-m, no CONFIG_* symbol needed
           if ! grep -q 'rtl8188eus/' drivers/net/wireless/Makefile; then
             echo 'obj-m += rtl8188eus/' >> drivers/net/wireless/Makefile
           fi
 
-          # Older Kconfig syntax some kernels' Kconfig parser rejects.
+          # Older Kconfig syntax — naye parser reject karte hain
           sed -i 's/---help---/help/g' drivers/net/wireless/rtl8188eus/Kconfig || true
 
-          # phydm_debug.c: sizeof(argv) (whole 2D array, 320 bytes) was used
-          # instead of sizeof(argv[0]) (one row, 16 bytes) as the strnlen
-          # bound on a single row argv[0]. Newer GCC flags this mismatch as
-          # -Werror=stringop-overread and aborts the build. Fix the bound.
+          # phydm_debug.c: sizeof(argv) (whole array, 320 bytes) was used
+          # instead of sizeof(argv[0]) (one row, 16 bytes) as strnlen bound.
+          # Newer GCC flags this as -Werror=stringop-overread.
           PHYDM=drivers/net/wireless/rtl8188eus/hal/phydm/phydm_debug.c
           if [ -f "$PHYDM" ]; then
             sed -i \
@@ -382,138 +76,95 @@ jobs:
               "$PHYDM"
           fi
 
-          echo "=== tail of drivers/net/wireless/Makefile ==="
+          echo "=== tail of wireless/Makefile ==="
           tail -5 drivers/net/wireless/Makefile
 
-      - name: Add full NetHunter wireless + CAN + Bluetooth + USB Serial + NFS + WireGuard + SDR + Netfilter configs
+      - name: Add driver configs
         run: |
           cd kernel_workspace/common/arch/arm64/configs
           {
-            # ============================================================
-            # NetHunter core
-            # ============================================================
-            echo "CONFIG_PACKET_DIAG=y"                   # ✓ NEW
-            echo "CONFIG_USB_G_HID=y"                     # ✓ NEW
-            echo "CONFIG_USB_CONFIGFS_F_HID=y"            # ✓ NEW
-
-            # ============================================================
-            # Firmware + USB
-            # ============================================================
-            echo "CONFIG_FW_LOADER=y"                     # ✓ NEW
-            echo "CONFIG_FW_LOADER_USER_HELPER=y"         # ✓ NEW
-            echo "CONFIG_USB_SUPPORT=y"                   # ✓ NEW
-            echo "CONFIG_USB_NET_DRIVERS=y"               # ✓ NEW
-            echo "CONFIG_USB_USBNET=y"                    # ✓ NEW
-            echo "CONFIG_USB_CDC_COMPOSITE=y"             # ✓ NEW
-            echo "CONFIG_USB_CONFIGFS=y"                  # ✓ NEW
-            echo "CONFIG_USB_CONFIGFS_ACM=y"              # ✓ NEW
-            echo "CONFIG_USB_CONFIGFS_RNDIS=y"            # ✓ NEW
-            echo "CONFIG_USB_CONFIGFS_MASS_STORAGE=y"     # ✓ NEW
-
-            # ============================================================
-            # USB Serial (SDR: HackRF, Airspy, RTL-SDR, CAN adapters)
-            # ============================================================
-            echo "CONFIG_USB_ACM=y"                       # ✓ NEW
-            echo "CONFIG_USB_SERIAL=y"                    # ✓ NEW
-            echo "CONFIG_USB_SERIAL_GENERIC=y"            # ✓ NEW
-            echo "CONFIG_USB_SERIAL_CP210X=y"             # ✓ NEW
-            echo "CONFIG_USB_SERIAL_FTDI_SIO=y"           # ✓ NEW
-            echo "CONFIG_USB_SERIAL_PL2303=y"             # ✓ NEW
-            echo "CONFIG_USB_SERIAL_CH341=y"              # ✓ NEW
-            echo "CONFIG_USB_SERIAL_ARK3116=y"            # ✓ NEW
-
-            # ============================================================
-            # USB Networking (RNDIS, CDC, etc.)
-            # ============================================================
-            echo "CONFIG_USB_NET_CDCETHER=y"              # ✓ NEW
-            echo "CONFIG_USB_NET_CDC_NCM=y"               # ✓ NEW
-            echo "CONFIG_USB_NET_RNDIS_HOST=y"            # ✓ NEW
-            echo "CONFIG_USB_NET_RNDIS_WLAN=y"            # ✓ NEW
-
-            # ============================================================
-            # RFKILL
-            # ============================================================
-            echo "CONFIG_RFKILL=y"                        # ✓ NEW
-            echo "CONFIG_RFKILL_LEDS=y"                   # ✓ NEW
-            
-            # ============================================================
-            # Bluetooth Advanced (L2CAP, RFCOMM, BNEP)
-            # ============================================================
-            echo "CONFIG_BT=y"                            # ✓ NEW
-            echo "CONFIG_BT_L2CAP=y"                      # ✓ NEW
-            echo "CONFIG_BT_SCO=y"                        # ✓ NEW
-            echo "CONFIG_BT_RFCOMM=y"                     # ✓ NEW
-            echo "CONFIG_BT_BNEP=y"                       # ✓ NEW
-            echo "CONFIG_BT_HIDP=y"                       # ✓ NEW
-            echo "CONFIG_BT_HCIUART_H4=y"                 # ✓ NEW
-            echo "CONFIG_BT_HCIUART_BCSP=y"               # ✓ NEW
-            echo "CONFIG_BT_HCIUART_LL=y"                 # ✓ NEW
-
-            # ============================================================
-            # CAN (Controller Area Network) - NetHunter
-            # ============================================================
-            echo "CONFIG_CAN=y"                           # ✓ NEW
-            echo "CONFIG_CAN_RAW=y"                       # ✓ NEW
-            echo "CONFIG_CAN_BCM=y"                       # ✓ NEW
-            echo "CONFIG_CAN_GW=y"                        # ✓ NEW
-            echo "CONFIG_CAN_J1939=y"                     # ✓ NEW
-            echo "CONFIG_CAN_ISOTP=y"                     # ✓ NEW
-            echo "CONFIG_CAN_SLCAN=y"                     # ✓ NEW
-            echo "CONFIG_CAN_VCAN=y"                      # ✓ NEW
-            echo "CONFIG_CAN_DEV=y"                       # ✓ NEW
-            echo "CONFIG_CAN_CALC_BITTIMING=y"            # ✓ NEW
-            echo "CONFIG_CAN_FLEXCAN=y"                   # ✓ NEW
-            echo "CONFIG_CAN_8DEV_USB=y"                  # ✓ NEW
-            echo "CONFIG_CAN_EMS_USB=y"                   # ✓ NEW
-            echo "CONFIG_CAN_ESD_USB2=y"                  # ✓ NEW
-            echo "CONFIG_CAN_GS_USB=y"                    # ✓ NEW
-            echo "CONFIG_CAN_KVASER_USB=y"                # ✓ NEW
-            echo "CONFIG_CAN_MCBA_USB=y"                  # ✓ NEW
-            echo "CONFIG_CAN_PEAK_USB=y"                  # ✓ NEW
-            echo "CONFIG_CAN_UCAN=y"                      # ✓ NEW
-            echo "CONFIG_CAN_USB=y"                       # ✓ NEW
-            echo "CONFIG_CAN_AT91=y"                      # ✓ NEW
-            echo "CONFIG_CAN_SJA1000=y"                   # ✓ NEW
-            echo "CONFIG_CAN_SJA1000_PLATFORM=y"          # ✓ NEW
-            echo "CONFIG_CAN_SJA1000_ISA=y"               # ✓ NEW
-            echo "CONFIG_CAN_SJA1000_ECAN=y"              # ✓ NEW
-
-            # ============================================================
-            # NFS (NetHunter)
-            # ============================================================
-            echo "CONFIG_NFS_FS=y"                        # ✓ NEW
-            echo "CONFIG_NFS_V3=y"                        # ✓ NEW
-            echo "CONFIG_NFS_V4=y"                        # ✓ NEW
-            echo "CONFIG_NFSD=y"                          # ✓ NEW
-
-            # ============================================================
-            # WireGuard
-            # ============================================================
-            echo "CONFIG_WIREGUARD=y"                     # ✓ NEW
-
-            # --- Bluetooth extras ---
+            echo "CONFIG_PACKET_DIAG=y"
+            echo "CONFIG_USB_G_HID=y"
+            echo "CONFIG_USB_CONFIGFS_F_HID=y"
+            echo "CONFIG_FW_LOADER=y"
+            echo "CONFIG_FW_LOADER_USER_HELPER=y"
+            echo "CONFIG_USB_SUPPORT=y"
+            echo "CONFIG_USB_NET_DRIVERS=y"
+            echo "CONFIG_USB_USBNET=y"
+            echo "CONFIG_USB_CDC_COMPOSITE=y"
+            echo "CONFIG_USB_CONFIGFS=y"
+            echo "CONFIG_USB_CONFIGFS_ACM=y"
+            echo "CONFIG_USB_CONFIGFS_RNDIS=y"
+            echo "CONFIG_USB_CONFIGFS_MASS_STORAGE=y"
+            echo "CONFIG_USB_ACM=y"
+            echo "CONFIG_USB_SERIAL=y"
+            echo "CONFIG_USB_SERIAL_GENERIC=y"
+            echo "CONFIG_USB_SERIAL_CP210X=y"
+            echo "CONFIG_USB_SERIAL_FTDI_SIO=y"
+            echo "CONFIG_USB_SERIAL_PL2303=y"
+            echo "CONFIG_USB_SERIAL_CH341=y"
+            echo "CONFIG_USB_SERIAL_ARK3116=y"
+            echo "CONFIG_USB_NET_CDCETHER=y"
+            echo "CONFIG_USB_NET_CDC_NCM=y"
+            echo "CONFIG_USB_NET_RNDIS_HOST=y"
+            echo "CONFIG_USB_NET_RNDIS_WLAN=y"
+            echo "CONFIG_RFKILL=y"
+            echo "CONFIG_RFKILL_LEDS=y"
+            echo "CONFIG_BT=y"
+            echo "CONFIG_BT_L2CAP=y"
+            echo "CONFIG_BT_SCO=y"
+            echo "CONFIG_BT_RFCOMM=y"
+            echo "CONFIG_BT_BNEP=y"
+            echo "CONFIG_BT_HIDP=y"
+            echo "CONFIG_BT_HCIUART_H4=y"
+            echo "CONFIG_BT_HCIUART_BCSP=y"
+            echo "CONFIG_BT_HCIUART_LL=y"
+            echo "CONFIG_CAN=y"
+            echo "CONFIG_CAN_RAW=y"
+            echo "CONFIG_CAN_BCM=y"
+            echo "CONFIG_CAN_GW=y"
+            echo "CONFIG_CAN_J1939=y"
+            echo "CONFIG_CAN_ISOTP=y"
+            echo "CONFIG_CAN_SLCAN=y"
+            echo "CONFIG_CAN_VCAN=y"
+            echo "CONFIG_CAN_DEV=y"
+            echo "CONFIG_CAN_CALC_BITTIMING=y"
+            echo "CONFIG_CAN_FLEXCAN=y"
+            echo "CONFIG_CAN_8DEV_USB=y"
+            echo "CONFIG_CAN_EMS_USB=y"
+            echo "CONFIG_CAN_ESD_USB2=y"
+            echo "CONFIG_CAN_GS_USB=y"
+            echo "CONFIG_CAN_KVASER_USB=y"
+            echo "CONFIG_CAN_MCBA_USB=y"
+            echo "CONFIG_CAN_PEAK_USB=y"
+            echo "CONFIG_CAN_UCAN=y"
+            echo "CONFIG_CAN_USB=y"
+            echo "CONFIG_CAN_AT91=y"
+            echo "CONFIG_CAN_SJA1000=y"
+            echo "CONFIG_CAN_SJA1000_PLATFORM=y"
+            echo "CONFIG_CAN_SJA1000_ISA=y"
+            echo "CONFIG_CAN_SJA1000_ECAN=y"
+            echo "CONFIG_NFS_FS=y"
+            echo "CONFIG_NFS_V3=y"
+            echo "CONFIG_NFS_V4=y"
+            echo "CONFIG_NFSD=y"
+            echo "CONFIG_WIREGUARD=y"
             echo "CONFIG_BT_HCIBCM203X=y"
             echo "CONFIG_BT_HCIBPA10X=y"
             echo "CONFIG_BT_HCIBFUSB=y"
             echo "CONFIG_BT_HCIVHCI=y"
-
-            # --- NFS extras ---
             echo "CONFIG_NETWORK_FILESYSTEMS=y"
             echo "CONFIG_NFS_V2=y"
             echo "CONFIG_NFSD_V3=y"
             echo "CONFIG_NFSD_V4=y"
-            # WiFi core
             echo "CONFIG_CFG80211=m"
             echo "CONFIG_MAC80211=m"
+            echo "CONFIG_MAC80211_LEDS=y"
             echo "CONFIG_NL80211_TESTMODE=y"
-
-            # Atheros (AR9271, AR7010)
             echo "CONFIG_WLAN_VENDOR_ATH=y"
             echo "CONFIG_ATH9K_HTC=m"
             echo "CONFIG_ATH_CARDS=m"
             echo "CONFIG_CARL9170=m"
-
-            # Ralink (RT3070, RT5370, RT5572)
             echo "CONFIG_WLAN_VENDOR_RALINK=y"
             echo "CONFIG_RT2X00=m"
             echo "CONFIG_RT2X00_LIB=m"
@@ -524,21 +175,12 @@ jobs:
             echo "CONFIG_RT2800USB_RT53XX=y"
             echo "CONFIG_RT2800USB_RT55XX=y"
             echo "CONFIG_RT73USB=m"
-
-            # Realtek (RTL8187, RTL8192CU, RTL8XXXU)
             echo "CONFIG_WLAN_VENDOR_REALTEK=y"
             echo "CONFIG_RTL8187=m"
             echo "CONFIG_RTL8192CU=m"
             echo "CONFIG_RTL8XXXU=m"
             echo "CONFIG_RTL8XXXU_UNTESTED=y"
-
-            # Realtek RTL8188EU (SimplyCEO out-of-mainline driver, dropped
-            # into drivers/net/wireless/rtl8188eus/ above). This entry is
-            # harmless insurance in case the driver's own obj rule ever
-            # turns out to be gated on this symbol instead of unconditional.
             echo "CONFIG_RTL8188EU=m"
-
-            # MediaTek (MT7601U, MT7610U, MT7612U)
             echo "CONFIG_WLAN_VENDOR_MEDIATEK=y"
             echo "CONFIG_MT7601U=m"
             echo "CONFIG_MT76_CORE=m"
@@ -547,8 +189,6 @@ jobs:
             echo "CONFIG_MT76x0U=m"
             echo "CONFIG_MT76x2_COMMON=m"
             echo "CONFIG_MT76x2U=m"
-
-            # Crypto for WEP/WPA
             echo "CONFIG_CRYPTO_ARC4=m"
             echo "CONFIG_CRYPTO_ECB=m"
             echo "CONFIG_CRYPTO_MICHAEL_MIC=m"
@@ -556,12 +196,9 @@ jobs:
             echo "CONFIG_CRYPTO_TKIP=m"
             echo "CONFIG_CRC_CCITT=m"
             echo "CONFIG_CRC_ITU_T=m"
-                        # Core module mechanism (CRITICAL)
             echo "CONFIG_MODULES=y"
             echo "CONFIG_MODULE_UNLOAD=y"
             echo "CONFIG_MODVERSIONS=y"
-
-            # SDR
             echo "CONFIG_MEDIA_DIGITAL_TV_SUPPORT=y"
             echo "CONFIG_MEDIA_SDR_SUPPORT=y"
             echo "CONFIG_USB_AIRSPY=y"
@@ -573,11 +210,7 @@ jobs:
             echo "CONFIG_DVB_RTL2832_SDR=y"
             echo "CONFIG_DVB_SI2168=y"
             echo "CONFIG_DVB_ZD1301_DEMOD=y"
-
-            # ZD1211RW
             echo "CONFIG_ZD1211RW=y"
-
-            # Realtek rtw88
             echo "CONFIG_RTW88=m"
             echo "CONFIG_RTW88_CORE=m"
             echo "CONFIG_RTW88_USB=m"
@@ -587,6 +220,22 @@ jobs:
             echo "CONFIG_RTW88_8822BU=m"
             echo "CONFIG_RTW88_8821CU=m"
             echo "CONFIG_RTW88_8723DU=m"
+            echo "CONFIG_NAMESPACES=y"
+            echo "CONFIG_NET_NS=y"
+            echo "CONFIG_CGROUPS=y"
+            echo "CONFIG_PID_NS=y"
+            echo "CONFIG_USER_NS=y"
+            echo "CONFIG_DEVTMPFS=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            echo "CONFIG_IP_SET=y"
+            echo "CONFIG_IP_SET_HASH_IP=y"
+            echo "CONFIG_IP_SET_HASH_NET=y"
+            echo "CONFIG_NETFILTER_XT_SET=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_TMPFS_XATTR=y"
           } >> gki_defconfig
 
       - name: Apply NetHunter WiFi injection patches
@@ -609,7 +258,6 @@ jobs:
               p.write_text(text.replace(old, new, 1))
               print(f"[ok] {label}")
 
-          # 1) mac80211: injected packet seqno + NO_ACK
           patch(
               "net/mac80211/tx.c",
               "\t/*\n\t * Packet injection may want to control the sequence\n\t * number, if we have no matching interface then we\n\t * neither assign one ourselves nor ask the driver to.\n\t */\n\tif (unlikely(info->control.vif->type == NL80211_IFTYPE_MONITOR))\n\t\treturn TX_CONTINUE;\n",
@@ -617,7 +265,6 @@ jobs:
               "mac80211 injected packet seqno/NO_ACK",
           )
 
-          # 2) mac80211: skip QoS header in monitor mode
           patch(
               "net/mac80211/tx.c",
               "\tieee80211_set_qos_hdr(sdata, skb);\n\tieee80211_tx(sdata, sta, skb, false);\n",
@@ -625,7 +272,6 @@ jobs:
               "mac80211 skip QoS hdr in monitor mode",
           )
 
-          # 3) cfg80211: allow monitor channel change
           patch(
               "net/wireless/chan.c",
               "\tif (!cfg80211_has_monitors_only(rdev))\n\t\treturn -EBUSY;\n",
@@ -633,7 +279,6 @@ jobs:
               "cfg80211 monitor channel EBUSY removal",
           )
 
-          # 4) rtl8187: don't set MOREFRAG in monitor mode
           patch(
               "drivers/net/wireless/realtek/rtl818x/rtl8187/dev.c",
               "\tif (ieee80211_has_morefrags(tx_hdr->frame_control))\n\t\tflags |= RTL818X_TX_DESC_FLAG_MOREFRAG;\n",
@@ -641,7 +286,6 @@ jobs:
               "rtl8187 monitor MOREFRAG fix",
           )
 
-          # 5) zd1211rw: rx filter + sniffer on
           patch(
               "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
               "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tu32 filter = STA_RX_FILTER;\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl)\n\t\tfilter |= RX_FILTER_CTRL;\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);\n}\n",
@@ -649,7 +293,6 @@ jobs:
               "zd1211rw set_rx_filter sniffer fix",
           )
 
-          # 6) zd1211rw: accept monitor frames
           patch(
               "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
               "\tif (status->frame_status & ZD_RX_ERROR) {\n",
@@ -657,7 +300,6 @@ jobs:
               "zd1211rw monitor frame acceptance",
           )
 
-          # 7) zd1211rw: use SIGNAL_DBM
           patch(
               "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
               "\tieee80211_hw_set(hw, SIGNAL_UNSPEC);\n",
@@ -665,74 +307,6 @@ jobs:
               "zd1211rw SIGNAL_DBM",
           )
           PYEOF
-          
-      - name: Apply NTSync patches
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          if [ "${SUBLEVEL}" -le "208" ]; then
-            curl -LSs -o /tmp/0003-lockdep-assert-none-held.patch \
-              https://raw.githubusercontent.com/WildKernels/GKI_KernelSU_SUSFS/main/.github/actions/ntsync/patches/0003-lockdep-assert-none-held.patch
-            patch -p1 -N < /tmp/0003-lockdep-assert-none-held.patch || echo "::warning::lockdep fix did not apply — may already be present"
-          fi
-
-          curl -LSs -o /tmp/ntsync_compat_android12-5.10.patch \
-            https://raw.githubusercontent.com/WildKernels/kernel_patches/main/common/ntsync/ntsync_compat_android12-5.10.patch
-          patch -p1 < /tmp/ntsync_compat_android12-5.10.patch || echo "::warning::ntsync compat patch had rejects — check .rej"
-
-          curl -LSs -o /tmp/ntsync_base.patch \
-            https://raw.githubusercontent.com/WildKernels/kernel_patches/main/common/ntsync/ntsync_base.patch
-          patch -p1 < /tmp/ntsync_base.patch || echo "::warning::ntsync base patch had rejects — check .rej"
-
-          echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/gki_defconfig
-
-      - name: Apply Droidspaces kABI-safe patches
-        working-directory: kernel_workspace/common
-        run: |
-          set -euo pipefail
-          DROIDSPACES_KABI_OK="true"
-          curl -fsSL -o /tmp/droidspaces_sysvipc_kabi.patch \
-            https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch
-          if ! patch -p1 < /tmp/droidspaces_sysvipc_kabi.patch; then
-            DROIDSPACES_KABI_OK="false"
-          fi
-          curl -fsSL -o /tmp/droidspaces_posix_mqueue_kabi.patch \
-            https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch
-          if ! patch -p1 < /tmp/droidspaces_posix_mqueue_kabi.patch; then
-            DROIDSPACES_KABI_OK="false"
-          fi
-          echo "DROIDSPACES_KABI_OK=${DROIDSPACES_KABI_OK}" >> "$GITHUB_ENV"
-
-      - name: Set Droidspaces configs
-        run: |
-          cd kernel_workspace/common/arch/arm64/configs
-          if [ "${DROIDSPACES_KABI_OK}" = "true" ]; then
-            {
-              echo "CONFIG_SYSVIPC=y"
-              echo "CONFIG_SYSVIPC_SYSCTL=y"
-              echo "CONFIG_POSIX_MQUEUE=y"
-              echo "CONFIG_POSIX_MQUEUE_SYSCTL=y"
-              echo "CONFIG_IPC_NS=y"
-            } >> gki_defconfig
-          fi
-          {
-            echo "CONFIG_NAMESPACES=y"
-            echo "CONFIG_NET_NS=y"
-            echo "CONFIG_CGROUPS=y"
-            echo "CONFIG_PID_NS=y"
-            echo "CONFIG_USER_NS=y"
-            echo "CONFIG_DEVTMPFS=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
-            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
-            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
-            echo "CONFIG_IP_SET=y"
-            echo "CONFIG_IP_SET_HASH_IP=y"
-            echo "CONFIG_IP_SET_HASH_NET=y"
-            echo "CONFIG_NETFILTER_XT_SET=y"
-            echo "CONFIG_TMPFS_POSIX_ACL=y"
-            echo "CONFIG_TMPFS_XATTR=y"
-          } >> gki_defconfig
 
       - name: Clean dirty flag
         working-directory: kernel_workspace
@@ -760,7 +334,7 @@ jobs:
         working-directory: kernel_workspace
         run: sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      - name: Disable modules list verification (fix modules out of date)
+      - name: Disable modules list verification
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -773,10 +347,8 @@ jobs:
             sed -i 's/^KMI_SYMBOL_LIST_STRICT_MODE=.*/KMI_SYMBOL_LIST_STRICT_MODE=0/' "$f"
             sed -i 's/^KMI_ENFORCED=.*/KMI_ENFORCED=0/' "$f"
           done
-          echo "MODULES_LIST + KMI checks disabled"
-          grep -n "MODULES_LIST\|MODULES_ORDER\|TRIM_NONLISTED_KMI\|KMI_SYMBOL_LIST\|KMI_ENFORCED\|KMI_SYMBOL_LIST_STRICT_MODE" common/build.config.gki* common/build.config.common 2>/dev/null || true
 
-      - name: Ensure generic ld exists for tools that don't pass -fuse-ld=lld
+      - name: Ensure generic ld exists
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -784,12 +356,9 @@ jobs:
           if [ -n "$LLD_PATH" ]; then
             BIN_DIR=$(dirname "$LLD_PATH")
             [ -e "$BIN_DIR/ld" ] || ln -s ld.lld "$BIN_DIR/ld"
-            echo "Symlinked ld -> ld.lld in $BIN_DIR"
-          else
-            echo "::warning::no ld.lld found under prebuilts-master"
           fi
 
-      - name: Build kernel
+      - name: Build kernel (drivers only)
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -802,31 +371,7 @@ jobs:
           CCACHE_DIR="${{ env.CCACHE_DIR }}" \
           build/build.sh -j"$(nproc)"
 
-      - name: Locate built Image
-        working-directory: kernel_workspace
-        run: |
-          set -euo pipefail
-          IMG=$(find out -path "*dist/Image" | head -n1)
-          if [ -z "$IMG" ]; then
-            IMG=$(find out -name "Image" | head -n1)
-          fi
-          if [ -z "$IMG" ]; then
-            echo "::error::No kernel Image found anywhere under kernel_workspace/out — build failed above"
-            exit 1
-          fi
-          echo "Found Image at: $IMG"
-          echo "IMG_PATH=kernel_workspace/${IMG}" >> "$GITHUB_ENV"
-
-      - name: Package AnyKernel3
-        run: |
-          set -euo pipefail
-          git clone --depth=1 https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 ak3
-          cp "${{ env.IMG_PATH }}" ak3/Image
-          cd ak3
-          zip -r9 -q "$GITHUB_WORKSPACE/${{ github.event.inputs.device_name }}-Blaze-android12-5.10-susfs${SUSFS_COMMIT:0:8}.zip" . -x ".git*"
-          ls -lh "$GITHUB_WORKSPACE"/*.zip
-
-      - name: Generate NetHunter Wireless Magisk Module
+      - name: Generate Drivers Magisk Module
         working-directory: kernel_workspace
         run: |
           set -euo pipefail
@@ -836,9 +381,7 @@ jobs:
           find out -name "*.ko" -exec cp {} wireless_module/system/lib/modules/ \; || true
           COUNT=$(find wireless_module/system/lib/modules -name "*.ko" | wc -l)
           echo "Packaging ${COUNT} .ko modules"
-          if [ "${COUNT}" -eq 0 ]; then
-            echo "::warning::No .ko modules found under out/ — wireless module will be empty"
-          fi
+          ls -la wireless_module/system/lib/modules/ | head -40
 
           cat > wireless_module/module.prop << 'EOF'
           id=Wireless-LKM
@@ -867,31 +410,26 @@ jobs:
             fi
           }
 
-          # --- Core wireless stack ---
           load cfg80211
           load mac80211
 
-          # --- Atheros ---
           load ath
           load ath9k_hw
           load ath9k_common
           load ath9k_htc
           load carl9170
 
-          # --- Ralink ---
           load rt2x00lib
           load rt2x00usb
           load rt2800lib
           load rt2800usb
           load rt73usb
 
-          # --- Realtek legacy ---
           load rtl8187
           load rtl8192cu
           load rtl8xxxu
           load 8188eu
 
-          # --- MediaTek ---
           load mt7601u
           load mt76
           load mt76-usb
@@ -900,7 +438,6 @@ jobs:
           load mt76x2-common
           load mt76x2u
 
-          # --- Realtek rtw88 (NEW) ---
           load rtw88_core
           load rtw88_usb
           load rtw88_8812au
@@ -910,14 +447,12 @@ jobs:
           load rtw88_8821cu
           load rtw88_8723du
 
-          # --- ZyDAS ZD1211RW (NEW) ---
           load zd1211rw
 
-          # --- Crypto deps ---
           load crc-itu-t
           load michael_mic
 
-          dmesg | grep -i -E "cfg80211|mac80211|ath|rt2x00|rt2800|rtl|rtw88|mt76|zd1211|8188eu|firmware" >> $LOG 2>&1
+          dmesg | grep -i -E "cfg80211|mac80211|rtl|rtw88|mt76|zd1211|8188eu|firmware" >> $LOG 2>&1
           EOF
           chmod +x wireless_module/service.sh
 
@@ -933,15 +468,14 @@ jobs:
           chmod +x wireless_module/META-INF/com/google/android/update-binary
 
           cd wireless_module
-          zip -r9 -q "$GITHUB_WORKSPACE/Wireless_LKM.zip" .
-          echo "Magisk module created: $GITHUB_WORKSPACE/Wireless_LKM.zip"
-          ls -lh "$GITHUB_WORKSPACE/Wireless_LKM.zip"
-          
+          zip -r9 -q "$GITHUB_WORKSPACE/${{ github.event.inputs.device_name }}-Wireless_LKM.zip" .
+          echo "Magisk module: $GITHUB_WORKSPACE/${{ github.event.inputs.device_name }}-Wireless_LKM.zip"
+          ls -lh "$GITHUB_WORKSPACE"/*.zip
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.device_name }}-build
-          path: |
-            ${{ github.workspace }}/*.zip
+          name: ${{ github.event.inputs.device_name }}-drivers
+          path: ${{ github.workspace }}/*.zip
           if-no-files-found: error
           retention-days: 14
