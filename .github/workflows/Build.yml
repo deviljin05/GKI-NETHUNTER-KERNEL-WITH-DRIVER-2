@@ -47,18 +47,17 @@ jobs:
         working-directory: kernel_workspace/common/arch/arm64/configs
         run: |
           set -euo pipefail
-          # GKI defconfig mein CFG80211, MAC80211, MAC80211_LEDS already =y hain
-          # Unhe override mat karo — sirf naye configs add karo
+          # GKI defconfig mein yeh sab already hain, override mat karo:
+          # - CONFIG_CFG80211, CONFIG_MAC80211, CONFIG_MAC80211_LEDS (built-in y)
+          # - CONFIG_WLAN_VENDOR_REALTEK (already y, RTL8188EU=m se auto)
+          # - CONFIG_CRYPTO_MICHAEL_MIC, CONFIG_CRC_ITU_T, CONFIG_CRC_CCITT (built-in y)
+          # Sirf naye configs add karo jo GKI mein nahi hain:
           cat >> gki_defconfig << 'EOF'
           CONFIG_RTL8188EU=m
-          CONFIG_WLAN_VENDOR_REALTEK=y
           CONFIG_CRYPTO_ARC4=m
-          CONFIG_CRYPTO_MICHAEL_MIC=m
-          CONFIG_CRC_CCITT=m
-          CONFIG_CRC_ITU_T=m
           EOF
           echo "=== tail of gki_defconfig ==="
-          tail -10 gki_defconfig
+          tail -5 gki_defconfig
 
       - name: Build kernel (Module.symvers generate karo)
         working-directory: kernel_workspace
