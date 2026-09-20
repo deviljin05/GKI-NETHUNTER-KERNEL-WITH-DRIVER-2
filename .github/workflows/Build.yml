@@ -78,12 +78,23 @@ jobs:
           echo "=== MODULE_NAME assembly (sanity check) ==="
           grep -n 'MODULE_NAME' Makefile | head -20 || true
 
-      - name: Minimal source fixes (Kconfig syntax only)
+      - name: Source fixes
         working-directory: ${{ github.workspace }}/driver
         run: |
           set -eux
           # Older Kconfig syntax some kernels' Kconfig parser rejects.
           sed -i 's/---help---/help/g' Kconfig || true
+
+          # phydm_debug.c: sizeof(argv) (whole 2D array, 320 bytes) was used
+          # instead of sizeof(argv[0]) (one row, 16 bytes) as the strnlen
+          # bound on a single row argv[0]. Newer GCC flags this mismatch as
+          # -Werror=stringop-overread and aborts the build. Fix the bound.
+          if [ -f hal/phydm/phydm_debug.c ]; then
+            sed -i \
+              's/strnlen(argv\[0\], sizeof argv)/strnlen(argv[0], sizeof argv[0])/' \
+              hal/phydm/phydm_debug.c
+            grep -n 'strnlen(argv\[0\]' hal/phydm/phydm_debug.c || true
+          fi
 
       - name: Build 8188eu.ko (using the driver's own Makefile)
         working-directory: ${{ github.workspace }}/driver
@@ -92,6 +103,10 @@ jobs:
           # Pass every common kernel-path variable name; whichever one the
           # driver's Makefile actually reads will be honored, the rest are
           # simply unused. This avoids depending on one guessed name.
+          #
+          # KCFLAGS relaxes a couple of GCC-version-sensitive warnings back
+          # to non-fatal, as a safety net for any other similar issues this
+          # old driver code might still hit on newer compilers.
           make \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -99,6 +114,7 @@ jobs:
             KDIR=$GITHUB_WORKSPACE/kernel_common \
             KERNELDIR=$GITHUB_WORKSPACE/kernel_common \
             KERNEL_DIR=$GITHUB_WORKSPACE/kernel_common \
+            KCFLAGS="-Wno-error=stringop-overread -Wno-error=array-bounds -Wno-error=maybe-uninitialized -Wno-error=stringop-overflow -Wno-error=unused-but-set-variable" \
             2>&1 | tee build.log
           echo "=== find .ko ==="
           find . -name "*.ko" -type f
