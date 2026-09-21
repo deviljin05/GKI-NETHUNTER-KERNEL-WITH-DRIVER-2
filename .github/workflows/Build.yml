@@ -321,6 +321,14 @@ jobs:
           # This single driver source covers RTL8188EU, RTL8188EUS and RTL8188ETV chipsets
           # and builds one module: 8188eu.ko
           git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
+          LLVM_AR_PATH=$(find prebuilts-master -type f -name 'llvm-ar' | head -n1)
+          if [ -n "$LLVM_AR_PATH" ]; then
+            export PATH="$(dirname "$LLVM_AR_PATH"):${PATH}"
+            echo "Found llvm-ar at: $LLVM_AR_PATH"
+          else
+            echo "::warning::llvm-ar not found under prebuilts-master, falling back to apt-installed llvm"
+            sudo apt-get install -y llvm
+          fi
           cd rtl8188eus
           DRVDIR="$(pwd)"
 
@@ -339,6 +347,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-android- \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CONFIG_RTL8188EU=m CONFIG_RTL8188E=y CONFIG_MULTIDRV=n \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf \
             KCFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
             modules 2>&1 | tee build.log
 
