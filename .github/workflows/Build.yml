@@ -326,7 +326,7 @@ jobs:
             echo "::error::llvm-ar not found under prebuilts-master — cannot build the driver with a matching toolchain"
             exit 1
           fi
-          LLVM_BIN_DIR="$(dirname "$LLVM_AR_PATH")"
+          LLVM_BIN_DIR="$(cd "$(dirname "$LLVM_AR_PATH")" && pwd)"
           echo "Using LLVM toolchain at: $LLVM_BIN_DIR"
           export PATH="${LLVM_BIN_DIR}:${PATH}"
           cd rtl8188eus
