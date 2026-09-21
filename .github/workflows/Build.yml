@@ -354,7 +354,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-android- \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CONFIG_RTL8188EU=m CONFIG_RTL8188E=y CONFIG_MULTIDRV=n \
-            KCFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
+            KCFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-unknown-warning-option -Wno-implicit-function-declaration" \
             modules 2>&1 | tee build.log
 
           KO=$(find . -maxdepth 1 -name "*.ko" | head -n1)
