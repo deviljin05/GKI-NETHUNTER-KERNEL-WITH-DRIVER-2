@@ -324,9 +324,14 @@ jobs:
           cd rtl8188eus
           DRVDIR="$(pwd)"
 
-          # Use the same LLVM/clang toolchain the kernel itself was built with — the kernel's
-          # own KBUILD_CFLAGS include clang-only flags (CFI, shadow-call-stack, etc.) that a
-          # plain GCC cross-compiler cannot parse.
+          # This Makefile builds up every -D define and -I include path (chip select,
+          # its own hal/phydm, hal/btc, platform folders, etc.) into the old-style
+          # EXTRA_CFLAGS/EXTRA_LDFLAGS variables. Modern kbuild (5.x) silently ignores
+          # those — it only honors ccflags-y/ldflags-y — so none of it was ever reaching
+          # the compiler. Renaming them (word-boundary safe, so USER_EXTRA_CFLAGS is left
+          # alone) makes the driver's own, already-correct logic actually take effect.
+          sed -i -E 's/\bEXTRA_CFLAGS\b/ccflags-y/g; s/\bEXTRA_LDFLAGS\b/ldflags-y/g' Makefile
+
           export PATH="${CLANG_BIN_DIR}:${PATH}"
           make -C "${KDIR}" M="${DRVDIR}" \
             ARCH=arm64 SUBARCH=arm64 \
@@ -334,7 +339,7 @@ jobs:
             CROSS_COMPILE=aarch64-linux-android- \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CONFIG_RTL8188EU=m CONFIG_RTL8188E=y CONFIG_MULTIDRV=n \
-            ccflags-y="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration -I${DRVDIR}/include -I${DRVDIR}/os_dep/linux -I${DRVDIR}/hal -I${DRVDIR}/hal/OUTSRC -I${DRVDIR}/platform" \
+            KCFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT -Wno-error -Wno-implicit-function-declaration" \
             modules 2>&1 | tee build.log
 
           KO=$(find . -maxdepth 1 -name "*.ko" | head -n1)
