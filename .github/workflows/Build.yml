@@ -340,6 +340,18 @@ jobs:
           # alone) makes the driver's own, already-correct logic actually take effect.
           sed -i -E 's/\bEXTRA_CFLAGS\b/ccflags-y/g; s/\bEXTRA_LDFLAGS\b/ldflags-y/g' Makefile
 
+          # This driver calls filp_open/kernel_read (EFUSE map file reading) which the
+          # kernel exports under a namespace drivers must explicitly import, or modpost
+          # rejects the module outright. Add the import right after MODULE_LICENSE(...)
+          # in whichever file declares it.
+          LICENSE_FILE=$(grep -rl "MODULE_LICENSE(" --include="*.c" . | head -n1)
+          if [ -n "$LICENSE_FILE" ]; then
+            echo "Adding MODULE_IMPORT_NS to: $LICENSE_FILE"
+            sed -i "/MODULE_LICENSE(/a MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);" "$LICENSE_FILE"
+          else
+            echo "::warning::No MODULE_LICENSE( found — could not add MODULE_IMPORT_NS"
+          fi
+
           # Pass every LLVM tool as an absolute path rather than a bare name: the M=
           # external-module build spawns its own recursive sub-make that doesn't
           # reliably inherit our PATH changes, so bare "llvm-ar" wasn't being found
