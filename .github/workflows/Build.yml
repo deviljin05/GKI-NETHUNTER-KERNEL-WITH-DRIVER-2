@@ -379,7 +379,13 @@ jobs:
             exit 1
           fi
           mkdir -p "$GITHUB_WORKSPACE/driver_out"
-          cp "$KO" "$GITHUB_WORKSPACE/driver_out/8188eu.ko"
+          echo "Unstripped size: $(du -h "$KO" | cut -f1)"
+          # The kernel's own .config builds with full debug info (DWARF), which this
+          # external module inherits — the driver's own --strip-debug linker flag
+          # doesn't make it through the renamed ldflags-y chain to the final link, so
+          # strip it ourselves before packaging.
+          "${LLVM_BIN_DIR}/llvm-strip" --strip-debug --strip-unneeded "$KO" -o "$GITHUB_WORKSPACE/driver_out/8188eu.ko"
+          echo "Stripped size: $(du -h "$GITHUB_WORKSPACE/driver_out/8188eu.ko" | cut -f1)"
           echo "Built driver: $KO"
 
       - name: Package AnyKernel3
