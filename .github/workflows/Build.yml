@@ -182,17 +182,12 @@ jobs:
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
 
-      # setup.sh clones KernelSU-Next (with .git, so the version count works),
-      # symlinks drivers/kernelsu and wires drivers/Makefile + drivers/Kconfig.
-      # The dev-susfs branch already carries the SUSFS hooks, so no extra
-      # KernelSU-side SUSFS patch is needed.
       - name: Setup KernelSU-Next
         working-directory: kernel_workspace/common
         run: |
           set -euo pipefail
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/${{ github.event.inputs.ksun_branch }}/kernel/setup.sh" | bash -s "${{ github.event.inputs.ksun_branch }}"
 
-          # Verify the integration actually landed
           [ -d KernelSU-Next/kernel ] || { echo "::error::KernelSU-Next/kernel missing after setup"; exit 1; }
           [ -e drivers/kernelsu ] || { echo "::error::drivers/kernelsu symlink missing"; exit 1; }
           grep -q 'kernelsu' drivers/Makefile || { echo "::error::drivers/Makefile not wired for kernelsu"; exit 1; }
