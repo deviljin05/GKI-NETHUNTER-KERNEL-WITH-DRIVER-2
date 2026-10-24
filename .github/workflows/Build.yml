@@ -1,4 +1,4 @@
-name: Build Custom GKI Kernel (Wild KSU + SUSFS + BBRv3)
+name: Build Custom GKI Kernel (FinaSU + SUSFS + BBRv3)
 
 on:
   workflow_dispatch:
@@ -178,15 +178,24 @@ jobs:
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
 
-      - name: Setup KernelSU-Next (Wild KSU, dev-susfs)
+      - name: Setup FinaSU (LyraVoid) with SUSFS
         working-directory: kernel_workspace/common
         run: |
           set -euo pipefail
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          # FinaSU officially supports SUSFS integration
+          curl -LSs "https://raw.githubusercontent.com/LyraVoid/FinaSU/main/kernel/setup.sh" | bash -s main
 
-      # NOTE: "Fix KernelSU-Next (static.patch)" step removed.
-      # It only touched the `LINUX_VERSION_CODE >= 6.6.0` block of selinux_hide.c,
-      # which is never compiled on 5.10 — it just produced selinux_hide.c.rej.
+          # Apply the SUSFS patch specifically for FinaSU
+          cd FinaSU
+          if [ -f "../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+            echo "Applying SUSFS integration patch for FinaSU..."
+            cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || echo "::warning::SUSFS patch may have rejects, check .rej"
+          else
+            echo "::warning::SUSFS FinaSU patch not found — trying legacy KernelSU patch"
+            cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+            patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || true
+          fi
 
       - name: Install Baseband Guard (BBG)
         if: ${{ github.event.inputs.enable_bbg == 'true' }}
