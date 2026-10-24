@@ -184,36 +184,9 @@ jobs:
           set -euo pipefail
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
-      - name: Fix KernelSU-Next (static.patch)
-        working-directory: kernel_workspace/common/KernelSU-Next
-        run: |
-          set -euo pipefail
-          cat > static.patch << 'STATIC_PATCH_EOF'
-          diff --git a/kernel/feature/selinux_hide.c b/kernel/feature/selinux_hide.c
-          index e1384d9..56e4cfe 100644
-          --- a/kernel/feature/selinux_hide.c
-          +++ b/kernel/feature/selinux_hide.c
-          @@ -35,12 +35,12 @@ bool ksu_selinux_hide_enabled __read_mostly = false;
-           bool ksu_selinux_hide_running __read_mostly = false;
-
-           #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-          -static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
-          -                                               u32 *sid, u32 def_sid, gfp_t gfp_flags);
-          -static int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
-          -                                               u32 *scontext_len);
-          -static void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
-          -                                                 struct av_decision *avd);
-          +int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
-          +                                        u32 *sid, u32 def_sid, gfp_t gfp_flags);
-          +int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
-          +                                        u32 *scontext_len);
-          +void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
-          +                                          struct av_decision *avd);
-           static void (*security_dump_masked_av_fn)(struct policydb *policydb, struct context *scontext, struct context *tcontext,
-                                                     u16 tclass, u32 permissions, const char *reason) = NULL;
-           static void (*context_struct_compute_av_fn)(struct policydb *policydb, struct context *scontext,
-          STATIC_PATCH_EOF
-          patch -p1 --forward < static.patch || echo "::warning::static.patch did not apply — may already be fixed upstream, not fatal"
+      # NOTE: "Fix KernelSU-Next (static.patch)" step removed.
+      # It only touched the `LINUX_VERSION_CODE >= 6.6.0` block of selinux_hide.c,
+      # which is never compiled on 5.10 — it just produced selinux_hide.c.rej.
 
       - name: Install Baseband Guard (BBG)
         if: ${{ github.event.inputs.enable_bbg == 'true' }}
@@ -277,6 +250,40 @@ jobs:
               [ -f "$PF" ] && { patch -p1 < "$PF" || echo "::warning::$p did not apply cleanly"; }
             done
           fi
+
+      - name: Fix BBRv3 rejected sysctl hunk
+        working-directory: kernel_workspace/common
+        run: |
+          set -euo pipefail
+          echo "===== .rej contents (paste these if compile still fails) ====="
+          find . -name "*.rej" -exec sh -c 'echo "--- $1 ---"; cat "$1"' _ {} \;
+          python3 - <<'PYEOF'
+          import re, pathlib
+          p = pathlib.Path("net/ipv4/sysctl_net_ipv4.c")
+          if not p.exists():
+              print("[skip] sysctl_net_ipv4.c not found")
+              raise SystemExit(0)
+          t = p.read_text()
+          need = {
+              "tcp_plb_max_rounds": "static int tcp_plb_max_rounds = 31;",
+              "tcp_plb_max_cong_thresh": "static int tcp_plb_max_cong_thresh = 256;",
+              "three": "static int three __maybe_unused = 3;",
+          }
+          add = []
+          for name, decl in need.items():
+              used = re.search(r'&%s\b' % name, t)
+              declared = re.search(r'^static\s+[^\n(]*\b%s\b\s*(__maybe_unused\s*)?=' % name, t, re.M)
+              if used and not declared:
+                  add.append(decl)
+          if add:
+              m = re.search(r'^static\s', t, re.M)
+              t = t[:m.start()] + "\n".join(add) + "\n" + t[m.start():]
+              p.write_text(t)
+              print("[ok] added:", add)
+          else:
+              print("[info] nothing missing")
+          PYEOF
+          rm -f net/ipv4/sysctl_net_ipv4.c.rej
 
       - name: Set networking / TCP congestion configs
         run: |
@@ -604,11 +611,11 @@ jobs:
               "rtl8187 monitor MOREFRAG fix",
           )
 
-          # 5) zd1211rw: rx filter + sniffer on
+          # 5) zd1211rw: rx filter + sniffer on  (typo fixed: ioraqs -> ioreqs)
           patch(
               "drivers/net/wireless/zydas/zd1211rw/zd_mac.c",
               "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tu32 filter = STA_RX_FILTER;\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl)\n\t\tfilter |= RX_FILTER_CTRL;\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);\n}\n",
-              "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tstruct zd_ioreq32 ioreqs[] = {\n\t\t{CR_RX_FILTER, STA_RX_FILTER},\n\t\t{ CR_SNIFFER_ON, 0U },\n\t};\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl) {\n\t\tioraqs[0].value |= 0xFFFFFFFF;\n\t\tioraqs[1].value = 0x1;\n\t}\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));\n}\n",
+              "static int set_rx_filter(struct zd_mac *mac)\n{\n\tunsigned long flags;\n\tstruct zd_ioreq32 ioreqs[] = {\n\t\t{CR_RX_FILTER, STA_RX_FILTER},\n\t\t{ CR_SNIFFER_ON, 0U },\n\t};\n\n\tspin_lock_irqsave(&mac->lock, flags);\n\tif (mac->pass_ctrl) {\n\t\tioreqs[0].value |= 0xFFFFFFFF;\n\t\tioreqs[1].value = 0x1;\n\t}\n\tspin_unlock_irqrestore(&mac->lock, flags);\n\n\treturn zd_iowrite32a(&mac->chip, ioreqs, ARRAY_SIZE(ioreqs));\n}\n",
               "zd1211rw set_rx_filter sniffer fix",
           )
 
