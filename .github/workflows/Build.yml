@@ -175,33 +175,24 @@ jobs:
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
 
-      # ==========================================
-      # FINASU KERNEL INTEGRATION (Manual Setup)
-      # ==========================================
       - name: Setup FinaSU Kernel Source
         working-directory: kernel_workspace/common
         run: |
           set -euo pipefail
-          # Clone FinaSU repository
           git clone https://github.com/LyraVoid/FinaSU.git -b master --depth=1 FinaSU-Repo
-          
-          # Copy FinaSU kernel folder into KernelSU
-          mkdir -p KernelSU
-          cp -r FinaSU-Repo/kernel/* ./KernelSU/
-          
-          # FinaSU uses its own manager signing hash, so let's make sure config is set
+          mkdir -p KernelSU/kernel
+          cp -r FinaSU-Repo/kernel/* ./KernelSU/kernel/
           echo "FinaSU Kernel files copied successfully."
 
       - name: Apply SUSFS Patch to FinaSU
         working-directory: kernel_workspace/common
         run: |
           set -euo pipefail
-          # SUSFS patch specifically for KernelSU (which FinaSU is based on)
           cd KernelSU
           if [ -f "../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
             cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
             echo "Applying SUSFS integration patch to FinaSU..."
-            patch -p1 --fuzz=3 < 10_enable_susfs_for_ksu.patch || {
+            patch -p2 --fuzz=3 < 10_enable_susfs_for_ksu.patch || {
               echo "::warning::SUSFS FinaSU patch had rejects — checking .rej files"
               find . -name "*.rej"
             }
@@ -210,9 +201,6 @@ jobs:
             exit 1
           fi
 
-      # ==========================================
-      # BASEBAND GUARD (BBG)
-      # ==========================================
       - name: Install Baseband Guard (BBG)
         if: ${{ github.event.inputs.enable_bbg == 'true' }}
         working-directory: kernel_workspace
@@ -245,9 +233,6 @@ jobs:
           cd kernel_workspace/common/arch/arm64/configs
           echo "CONFIG_BBG=y" >> gki_defconfig
 
-      # ==========================================
-      # BBRv3 & NETWORK OPTIMIZATIONS
-      # ==========================================
       - name: Apply BBRv3 backport
         working-directory: kernel_workspace/common
         run: |
@@ -255,10 +240,114 @@ jobs:
           git clone --depth=1 https://github.com/WildKernels/kernel_patches.git /tmp/wildpatches
           BBRV3_PATCH="/tmp/wildpatches/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android12-5.10.patch"
           if [ -f "$BBRV3_PATCH" ]; then
-            patch -p1 < "$BBRV3_PATCH" || echo "::warning::BBRv3 patch had rejects"
+            patch -p1 < "$BBRV3_PATCH" || {
+              echo "::warning::BBRv3 patch had rejects — check .rej files below";
+              find . -name "*.rej";
+            }
           else
-            echo "::warning::BBRv3 patch not found"
+            echo "::warning::BBRv3 patch not found — skipping."
           fi
+
+          if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h; then
+            for p in sysctl_add_proc_dou8vec_minmax.patch sysctl_fix_data-races_in_proc_dou8vec_minmax.patch; do
+              PF="/tmp/wildpatches/common/bbrv3/$p"
+              [ -f "$PF" ] && { patch -p1 < "$PF" || echo "::warning::$p did not apply cleanly"; }
+            done
+          fi
+
+      - name: Fix BBRv3 rejected sysctl hunk (auto-rollback to BBR v1 if unfixable)
+        working-directory: kernel_workspace/common
+        run: |
+          set -uo pipefail
+          F=net/ipv4/sysctl_net_ipv4.c
+          BBRV3_PATCH="/tmp/wildpatches/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android12-5.10.patch"
+
+          echo "===== .rej files ====="
+          find . -name "*.rej" -exec sh -c 'echo "--- $1 ---"; cat "$1"' _ {} \;
+
+          rollback() {
+            echo "::warning::BBRv3 could not be fully applied — rolling back to BBR v1"
+            if [ -f "$BBRV3_PATCH" ]; then
+              for f in $(grep '^+++ ' "$BBRV3_PATCH" | sed -E 's/^\+\+\+ [ab]\///; s/[[:space:]].*$//' | grep -v '^/dev/null'); do
+                if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+                  git checkout -- "$f"
+                else
+                  rm -f "$f"
+                fi
+                rm -f "$f.rej" "$f.orig"
+              done
+            fi
+          }
+
+          if [ -f "$F.rej" ]; then
+            cp "$F.rej" /tmp/sysctl_first.rej
+            if patch -F3 -r /tmp/sysctl_second.rej "$F" < /tmp/sysctl_first.rej; then
+              echo "[ok] failed hunk applied with fuzz"
+            else
+              echo "[info] fuzz failed — inserting manually"
+          python3 - <<'PYEOF'
+          import pathlib
+          rej = pathlib.Path("/tmp/sysctl_first.rej").read_text().splitlines()
+          p = pathlib.Path("net/ipv4/sysctl_net_ipv4.c")
+          t = p.read_text()
+          adds, in_hunk = [], False
+          for l in rej:
+              if l.startswith("@@"):
+                  in_hunk = True
+                  continue
+              if in_hunk and l.startswith("+") and not l.startswith("+++"):
+                  adds.append(l[1:])
+          if not adds:
+              print("[warn] no added lines found in .rej")
+              raise SystemExit(0)
+          idx = t.find("/* Update system visible IP port range */")
+          if idx < 0:
+              idx = t.find("static void set_local_port_range")
+          if idx < 0:
+              print("[warn] insertion anchor not found")
+              raise SystemExit(1)
+          p.write_text(t[:idx] + "\n".join(adds) + "\n\n" + t[idx:])
+          print(f"[ok] inserted {len(adds)} lines")
+          PYEOF
+            fi
+            rm -f "$F.rej" "$F.orig"
+          fi
+
+          FIXED=1
+          if [ -f "$F" ]; then
+          python3 - <<'PYEOF2' || FIXED=0
+          import re, pathlib
+          p = pathlib.Path("net/ipv4/sysctl_net_ipv4.c")
+          t = p.read_text()
+          if "plb_net_ops" in t and not re.search(r'^(static\s+)?struct\s+pernet_operations\s+plb_net_ops', t, re.M):
+              print("[error] plb_net_ops is used but never defined")
+              raise SystemExit(1)
+          need = {
+              "tcp_plb_max_rounds": "static int tcp_plb_max_rounds = 31;",
+              "tcp_plb_max_cong_thresh": "static int tcp_plb_max_cong_thresh = 256;",
+              "three": "static int three __maybe_unused = 3;",
+          }
+          add = []
+          for name, decl in need.items():
+              used = re.search(r'&%s\b' % name, t)
+              declared = re.search(r'^static\s[^;(\n]*\b%s\b' % name, t, re.M)
+              if used and not declared:
+                  add.append(decl)
+          if add:
+              idx = t.find("/* Update system visible IP port range */")
+              if idx < 0:
+                  idx = t.find("static void set_local_port_range")
+              p.write_text(t[:idx] + "\n".join(add) + "\n\n" + t[idx:])
+              print("[ok] added missing declarations:", add)
+          else:
+              print("[info] no missing declarations")
+          PYEOF2
+          fi
+
+          if [ "$FIXED" -ne 1 ]; then
+            rollback
+          fi
+          exit 0
 
       - name: Set networking / TCP congestion configs
         run: |
@@ -331,9 +420,6 @@ jobs:
             echo "CONFIG_LRU_GEN_ENABLED=y"
           } >> gki_defconfig
 
-      # ==========================================
-      # NETHUNTER & WIRELESS CONFIGS
-      # ==========================================
       - name: Add full NetHunter wireless + CAN + Bluetooth + USB Serial + NFS + WireGuard + SDR + Netfilter configs
         run: |
           cd kernel_workspace/common/arch/arm64/configs
